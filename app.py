@@ -4,93 +4,143 @@
 import streamlit as st
 import numpy as np
 import shap
-import matplotlib.pyplot as plt # Import matplotlib
-import streamlit.components.v1 as components # Import components
+import streamlit.components.v1 as components
 
 # Import our custom modules
 import model_loader
 import feature_extractor
 
 # --- Page Configuration ---
-# Set the page title, icon, and layout. The layout "wide" is good for dashboards.
+# Set the page title, icon, and layout.
 st.set_page_config(
     page_title="AegisLens - Explainable Phishing Detector",
     page_icon="🛡️",
     layout="wide"
 )
 
-# --- Asset Loading ---
-# Use Streamlit's caching to load the model and explainer only once,
-# which improves performance.
+# --- Function to load external CSS ---
+def load_css(file_name):
+    """
+    Loads an external CSS file and injects it into the Streamlit app.
+    """
+    try:
+        with open(file_name) as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    except FileNotFoundError:
+        st.error(f"CSS file not found: {file_name}. Make sure the 'styles' directory and 'style.css' file exist.")
 
+
+# --- Asset Loading ---
 @st.cache_resource
 def load_assets():
-    """Loads the ML model and SHAP explainer."""
+    """
+    Loads the ML model and SHAP explainer using streamlit's cache
+    to prevent reloading on every interaction.
+    """
     model = model_loader.load_model()
     explainer = model_loader.load_explainer()
     return model, explainer
 
+# --- Backend Analysis Function ---
+def run_analysis(url, model, explainer):
+    """
+    Performs the full analysis pipeline on a given URL.
+    
+    Args:
+        url (str): The URL to analyze.
+        model: The trained machine learning model.
+        explainer: The SHAP explainer object.
+        
+    Returns:
+        A dictionary containing all results needed for display.
+    """
+    # 1. Extract features from the URL.
+    feature_vector = feature_extractor.extract_features(url)
+
+    # 2. Predict using the model's predict_proba method.
+    prediction_proba = model.predict_proba(feature_vector)
+    confidence = prediction_proba[0][1]  # Probability of being phishing
+    prediction = 1 if confidence > 0.5 else 0
+
+    # 3. Generate SHAP explanation for the prediction.
+    shap_values = explainer.shap_values(feature_vector)
+    
+    # We are interested in the "phishing" class (index 1).
+    shap_values_for_phishing = shap_values[0, :, 1]
+    base_value_for_phishing = explainer.expected_value[1]
+
+    return {
+        "prediction": prediction,
+        "confidence": confidence,
+        "feature_vector": feature_vector[0],
+        "shap_values": shap_values_for_phishing,
+        "base_value": base_value_for_phishing,
+        "feature_names": feature_extractor.FEATURE_ORDER,
+    }
+
+# --- UI Display Function ---
+def display_results_area(results):
+    """
+    Renders the analysis results in the UI.
+    
+    Args:
+        results (dict): The dictionary returned by run_analysis.
+    """
+    st.markdown("---")
+    st.header("Analysis Results")
+
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        # Display verdict based on prediction
+        if results["prediction"] == 1:  # Phishing
+            st.markdown(
+                '<div class="verdict-container verdict-phishing">'
+                '<p class="verdict-text" style="color:#E01E5A;">Phishing Detected</p>'
+                f'<p class="confidence-text" style="color:#FFFFFF;">Confidence: {results["confidence"]:.2%}</p>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+        else:  # Legitimate
+            st.markdown(
+                '<div class="verdict-container verdict-safe">'
+                '<p class="verdict-text" style="color:#4A90E2;">Looks Safe</p>'
+                f'<p class="confidence-text" style="color:#8892B0;">Phishing Confidence: {results["confidence"]:.2%}</p>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+
+    with col2:
+        st.info(
+            "**How to read the plot below:**\n"
+            "- **Features in red** pushed the prediction towards 'Phishing'.\n"
+            "- **Features in blue** pushed it towards 'Safe'.\n"
+            "- The **length of the bar** shows the magnitude of the feature's impact."
+        )
+    
+    st.subheader("Prediction Explanation")
+    # Create the SHAP force plot object
+    force_plot = shap.force_plot(
+        base_value=results["base_value"],
+        shap_values=results["shap_values"],
+        features=results["feature_vector"],
+        feature_names=results["feature_names"]
+    )
+    # Render the plot using a wrapper function
+    shap_html = f"<head>{shap.getjs()}</head><body>{force_plot.html()}</body>"
+    components.html(shap_html, height=150, scrolling=True)
+
+# --- Main Application ---
+
+# Load CSS and Machine Learning assets
+load_css("styles/style.css")
 model, explainer = load_assets()
 
-# --- Custom CSS for Styling ---
-# Inject custom CSS to align with the AegisLens brand identity.
-st.markdown("""
-<style>
-    /* Main App Background */
-    .stApp {
-        background-color: #0A192F;
-    }
-    /* Main Title Style */
-    .title {
-        font-size: 3rem;
-        font-weight: bold;
-        color: #FFFFFF; /* Brighter for title */
-        padding-bottom: 10px;
-    }
-    /* Subheader/Tagline Style */
-    .tagline {
-        font-size: 1.25rem;
-        color: #8892B0;
-        padding-bottom: 30px;
-    }
-    /* Custom button styling */
-    .stButton>button {
-        border-color: #4A90E2;
-        color: #4A90E2;
-        border-radius: 5px;
-    }
-    .stButton>button:hover {
-        border-color: #FFFFFF;
-        color: #FFFFFF;
-        background-color: #4A90E2;
-    }
-    /* Styling for the results containers */
-    .verdict-container {
-        padding: 20px;
-        border-radius: 10px;
-        text-align: center;
-        margin-bottom: 20px;
-    }
-    .verdict-safe {
-        background-color: #1a3b5f; /* A darker shade of safe blue */
-    }
-    .verdict-phishing {
-        background-color: #5c2c41; /* A darker shade of threat red */
-    }
-    .verdict-text {
-        font-size: 2rem;
-        font-weight: bold;
-    }
-    .confidence-text {
-        font-size: 1.1rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Initialize session state to store results
+if 'analysis_results' not in st.session_state:
+    st.session_state['analysis_results'] = None
 
-
-# --- UI Layout ---
-
-# Sidebar for information
+# --- Sidebar UI ---
 with st.sidebar:
     st.image("https://i.imgur.com/71444j0.png", width=100) # Placeholder logo
     st.title("AegisLens")
@@ -105,100 +155,31 @@ with st.sidebar:
         "The analysis is performed in-memory and is stateless."
     )
 
-# Main content
+# --- Main Page UI ---
 st.markdown('<p class="title">AegisLens</p>', unsafe_allow_html=True)
 st.markdown('<p class="tagline">Beyond Detection. True Understanding.</p>', unsafe_allow_html=True)
 
-# URL Input Box
-url_to_check = st.text_input(
-    "Enter the URL you want to analyze:",
-    placeholder="e.g., https://www.example.com"
-)
+# Use a form for the input to prevent reruns on every key press
+with st.form("url_analysis_form"):
+    url_to_check = st.text_input(
+        "Enter the URL you want to analyze:",
+        placeholder="e.g., https://www.example.com"
+    )
+    submitted = st.form_submit_button("Analyze URL")
 
-# Analyze Button
-if st.button("Analyze URL"):
-    # --- Input Validation ---
-    if not url_to_check or not url_to_check.strip():
-        st.error("Please enter a URL to analyze.")
-    elif model is None or explainer is None:
-        st.error("Model or SHAP explainer not loaded. Please check the logs.")
-    else:
+# Logic to run when the form is submitted
+if submitted:
+    if url_to_check and url_to_check.strip() and (model and explainer):
         with st.spinner('Extracting features and analyzing...'):
-            # --- Backend Logic ---
-            # 1. Extract features from the URL. Returns shape (1, 14).
-            feature_vector = feature_extractor.extract_features(url_to_check)
+            # Store results in session state
+            st.session_state['analysis_results'] = run_analysis(url_to_check, model, explainer)
+    elif not (model and explainer):
+         st.error("Model or SHAP explainer not loaded. Please check the logs.")
+         st.session_state['analysis_results'] = None # Clear previous results
+    else:
+        st.error("Please enter a URL to analyze.")
+        st.session_state['analysis_results'] = None # Clear previous results
 
-            # 2. Predict using the model
-            # predict_proba gives [prob_legitimate, prob_phishing]
-            prediction_proba = model.predict_proba(feature_vector)
-            confidence = prediction_proba[0][1] # Probability of being phishing
-            prediction = 1 if confidence > 0.5 else 0
-
-            # 3. Generate SHAP explanation for the prediction.
-            # Output is a list of two arrays [class_0_values, class_1_values],
-            # each with shape (1, 14) for our single prediction.
-            shap_values = explainer.shap_values(feature_vector)
-
-            # --- Display Results ---
-            st.markdown("---")
-            st.header("Analysis Results")
-
-            # Create columns for a cleaner layout
-            col1, col2 = st.columns(2)
-
-            with col1:
-                if prediction == 1: # Phishing
-                    st.markdown(
-                        '<div class="verdict-container verdict-phishing">'
-                        '<p class="verdict-text" style="color:#E01E5A;">Phishing Detected</p>'
-                        f'<p class="confidence-text" style="color:#FFFFFF;">Confidence: {confidence:.2%}</p>'
-                        '</div>',
-                        unsafe_allow_html=True
-                    )
-                else: # Legitimate
-                    st.markdown(
-                        '<div class="verdict-container verdict-safe">'
-                        '<p class="verdict-text" style="color:#4A90E2;">Looks Safe</p>'
-                        f'<p class="confidence-text" style="color:#8892B0;">Phishing Confidence: {confidence:.2%}</p>'
-                        '</div>',
-                        unsafe_allow_html=True
-                    )
-
-            with col2:
-                st.info(
-                    "**How to read the plot below:**\n"
-                    "- **Red bars** show features that pushed the prediction towards 'Phishing'.\n"
-                    "- **Blue bars** show features that pushed it towards 'Safe'.\n"
-                    "- The **length of the bar** shows the impact of that feature."
-                )
-            
-            # --- Function to render SHAP Force Plot ---
-            # This function generates the plot as HTML and renders it.
-            def st_shap(plot, height=None):
-                shap_html = f"<head>{shap.getjs()}</head><body>{plot.html()}</body>"
-                components.html(shap_html, height=height)
-
-            # Display the SHAP force plot for the "phishing" class
-            st.subheader("Prediction Explanation")
-            
-            # For a single prediction, we need to pass 1D arrays to the force_plot.
-            # We select the values for the "phishing" class (index 1) and the first sample (index 0).
-            shap_values_for_phishing = shap_values[0, :, 1]
-            
-            # The base value for the "phishing" class.
-            base_value_for_phishing = explainer.expected_value[1]
-            
-            # The actual feature values for our single sample.
-            feature_values_instance = feature_vector[0]
-
-
-            # Create the force plot object
-            force_plot = shap.force_plot(
-                base_value=base_value_for_phishing,
-                shap_values=shap_values_for_phishing,
-                features=feature_values_instance,
-                feature_names=feature_extractor.FEATURE_ORDER
-            )
-
-            # Render the plot using our custom function
-            st_shap(force_plot, 150)
+# Display the results if they exist in the session state
+if st.session_state['analysis_results']:
+    display_results_area(st.session_state['analysis_results'])
