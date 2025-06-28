@@ -3,7 +3,7 @@ AegisLens is a modern, AI-powered analytical tool designed to classify URLs as e
 
 This project was developed as a Minimum Viable Product (MVP) over a four-week agile sprint plan.
 
-### **📸 Live Demo Screenshot**
+### **Live Demo Screenshot**
 
 (Placeholder for a screenshot of the running Streamlit application)
 
@@ -14,7 +14,7 @@ This project was developed as a Minimum Viable Product (MVP) over a four-week ag
 * **Intuitive Web Interface:** A clean and professional UI built with Streamlit for easy analysis.  
 * **Stateless & Secure by Design:** No user-submitted URLs are stored or logged, ensuring user privacy. The MVP uses a secure, simulated feature extraction process.
 
-### **🛠️ Technology Stack**
+### **Technology Stack**
 
 * **Backend:** Python 3.12  
 * **Web Framework:** Streamlit  
@@ -68,11 +68,11 @@ aegis\_lens/
     ├── url\_model\_ds114.joblib     \# The serialized, trained RandomForest model  
     └── url\_explainer\_ds114.joblib \# The serialized SHAP explainer object
 
-### **🧠 The Model**
+### **The Model**
 
 The predictive engine is a RandomForestClassifier trained on the "Phishing Websites" dataset. Through an explainability analysis using SHAP, the initial feature set of 48 was reduced to **14 key features** with a negligible impact on performance (\~0.3% drop in accuracy). This significantly improves the efficiency of the model for live inference. The analysis and final model training can be found in the [xai_analysis_feature_comp.ipynb](/xai_analysis_feature_comp.ipynb) notebook.
 
-### **🛡️ Security Considerations**
+### **Security Considerations**
 
 Security is a primary concern for an application that handles potentially malicious URLs.
 
