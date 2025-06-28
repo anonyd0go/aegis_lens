@@ -1,0 +1,81 @@
+/* styles/style.css */
+/* This file contains all the styling for the AegisLens Streamlit App. */
+
+/* --- Main App Styling --- */
+/* Sets the background color for the entire application. */
+.stApp {
+    background-color: #0A192F; /* Deep Navy Blue */
+}
+
+/* --- Typography --- */
+/* Style for the main title of the application. */
+.title {
+    font-size: 5rem;
+    font-weight: bold;
+    color: #E6F1FF; /* Lighter, more readable blue */
+    padding-bottom: 10px;
+}
+
+/* Style for the tagline or subheader. */
+.tagline {
+    font-size: 2rem;
+    color: #8892B0; /* Slate Blue/Grey for secondary text */
+    padding-bottom: 30px;
+}
+
+/* General text elements in the main area. */
+p {
+    color: #BDC5D4; /* Brighter grey for body text */
+}
+
+/* --- Sidebar Styling --- */
+/* Targets the sidebar to give it a distinct background color. */
+[data-testid="stSidebar"] {
+    background-color: #0F2A4A; /* Slightly lighter navy for depth */
+}
+
+/* --- Button Styling --- */
+/* Custom styling for Streamlit's default button. */
+.stButton>button {
+    border-color: #4A90E2; /* Sky Blue */
+    color: #4A90E2;
+    border-radius: 5px;
+    transition: all 0.2s ease-in-out;
+}
+
+/* Hover effect for the button to improve user feedback. */
+.stButton>button:hover {
+    border-color: #FFFFFF;
+    color: #FFFFFF;
+    background-color: #4A90E2;
+}
+
+/* --- Results & Verdict Containers --- */
+/* Base style for the container that displays the analysis verdict. */
+.verdict-container {
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+/* Style for a "Safe" verdict. */
+.verdict-safe {
+    background-color: #1a3b5f; /* Darker shade of safe blue */
+}
+
+/* Style for a "Phishing" verdict. */
+.verdict-phishing {
+    background-color: #5c2c41; /* Darker shade of threat red */
+}
+
+/* Text style within the verdict container. */
+.verdict-text {
+    font-size: 2rem;
+    font-weight: bold;
+}
+
+/* Text style for the confidence score. */
+.confidence-text {
+    font-size: 1.1rem;
+}
