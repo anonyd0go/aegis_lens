@@ -142,11 +142,11 @@ if 'analysis_results' not in st.session_state:
 
 # --- Sidebar UI ---
 with st.sidebar:
-    st.image("https://i.imgur.com/71444j0.png", width=100) # Placeholder logo
+    st.image("assets/logo.png", width=150) # Placeholder logo
     st.title("AegisLens")
     st.info(
         "This application uses a Random Forest model to detect phishing URLs "
-        "and SHAP (SHapley Additive exPlanations) to explain its predictions."
+        "and SHAP to explain its predictions."
     )
     st.markdown("---")
     st.header("Privacy Notice")
