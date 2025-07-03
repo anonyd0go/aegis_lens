@@ -28,17 +28,18 @@ You can use the live tool here: [**https://aegislens.disco.site**](https://www.g
 ### **Project Structure**
 
 The project is organized into a modular structure for clarity and maintainability:
-
-aegis\_lens/  
-│  
-├── app.py                  \# Main Streamlit application file (UI & Orchestration)  
-├── feature\_extractor.py    \# Extracts feature vectors from URLs (MVP: simulated HTML features)  
-├── model\_loader.py         \# Loads the serialized model and SHAP explainer  
-├── requirements.txt        \# Project dependencies  
-│  
-└── models/  
-    ├── url\_model\_ds114.joblib     \# The serialized, trained RandomForest model  
-    └── url\_explainer\_ds114.joblib \# The serialized SHAP explainer object
+```
+    aegis\_lens/  
+    │  
+    ├── app.py                  \# Main Streamlit application file (UI & Orchestration)  
+    ├── feature\_extractor.py    \# Extracts feature vectors from URLs (MVP: simulated HTML features)  
+    ├── model\_loader.py         \# Loads the serialized model and SHAP explainer  
+    ├── requirements.txt        \# Project dependencies  
+    │  
+    └── models/  
+        ├── url\_model\_ds114.joblib     \# The serialized, trained RandomForest model  
+        └── url\_explainer\_ds114.joblib \# The serialized SHAP explainer object
+```
 
 ### **The Model**
 
