@@ -2,7 +2,7 @@
     "version": "1.0",
     "services": {
         "web": {
-            "port": 8080
+            "port": 8000
         }
     }
 }
