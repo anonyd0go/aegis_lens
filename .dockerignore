@@ -1,0 +1,23 @@
+# Ignore development notebooks and scripts
+model_training_ds*
+model_showdown*
+xai_*
+
+# Ignore git and environment files
+.git
+.gitignore
+.venv
+dev_req.txt
+__pycache__
+
+# Ignore data files
+data/
+
+# Ignore everything in the models directory
+models/*
+# except for the specific model and explainer.
+!models/url_model_ds114.joblib
+!models/url_explainer_ds114.joblib
+
+# Ignore documentation
+README.md

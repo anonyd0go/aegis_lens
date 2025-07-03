@@ -1,0 +1,8 @@
+{
+  "name": "aegislens",
+  "public": true,
+  "port": 8000,
+  "build": {
+    "builder": "docker"
+  }
+}
