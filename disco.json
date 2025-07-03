@@ -1,8 +1,8 @@
 {
-  "name": "aegislens",
-  "public": true,
-  "port": 8000,
-  "build": {
-    "builder": "docker"
-  }
+    "version": "1.0",
+    "services": {
+        "web": {
+            "port": 8080
+        }
+    }
 }
