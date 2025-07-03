@@ -8,7 +8,7 @@ AegisLens is a web-based analytical tool that uses machine learning to classify 
 
 **The AegisLens application is deployed and publicly accessible.**
 
-You can use the live tool here: [**https://aegislens.disco.site**](https://www.google.com/search?q=https://aegislens.disco.site) *(Note: This URL is a placeholder until the initial deployment is complete.)*
+You can use the live tool here: [**https://aegislens.holbie.dev.pr/**](https://aegislens.holbie.dev.pr/)
 
 ### **Key Features**
 
