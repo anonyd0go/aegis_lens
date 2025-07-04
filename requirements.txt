@@ -25,7 +25,7 @@ shap==0.48.0
 matplotlib==3.10.3
 
 # For parsing HTML to extract live features
-beautifulsoup4=4.13.4
+beautifulsoup4==4.13.4
 
 # For making request to feature extractor
-requests=2.32.4
+requests==2.32.4
