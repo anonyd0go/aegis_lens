@@ -113,7 +113,7 @@ if st.button("Analyze URL"):
                 # This means red arrows always indicate a feature increases the phishing score.
                 # We select the expected_value and shap_values for class 1.
                 expected_value_phishing = explainer.expected_value[1]
-                shap_values_phishing = shap_values[0, :, 1]
+                shap_values_phishing = shap_values[1][0]
 
                 fig, ax = plt.subplots(figsize=(10, 3))
                 shap.force_plot(
