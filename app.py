@@ -6,6 +6,7 @@ import requests
 import pandas as pd
 import os
 import shap
+# Matplotlib is no longer needed for the force plot
 from feature_extractor import extract_features, FEATURE_ORDER
 from model_loader import load_model, load_explainer
 
@@ -93,7 +94,7 @@ if st.button("Analyze URL"):
                 prediction = model.predict(features_df)[0]
                 
                 # The explainer is configured to explain the "Phishing" class output.
-                shap_values = explainer.shap_values(features_df)
+                shap_values = explainer(features_df)
                 
                 # --- Display Results ---
                 st.subheader("Analysis Results")
@@ -106,20 +107,15 @@ if st.button("Analyze URL"):
                 st.subheader("Explanation of Verdict")
                 st.write("This force plot shows which features pushed the prediction towards 'Phishing' (red) or 'Legitimate' (blue). Features with larger impact are shown closer to the center.")
                 
-                # --- Consistent Force Plot ---             
-                # Create a SHAP Explanation object. This bundles all the necessary data together.
-                explanation = shap.Explanation(
-                    values=shap_values,
-                    base_values=explainer.expected_value,
-                    data=features_df.values,
-                    feature_names=features_df.columns
-                )
-
-                # Generate the plot for the first (and only) sample using the Explanation object.
-                # This uses the robust JavaScript renderer.
+                # --- Consistent Force Plot using the modern SHAP API ---
+                # CORRECTED: The most robust method is to use the explainer to generate a full
+                # Explanation object, then select the first sample from it for plotting.
+                
+                # The `shap_values` object is now a `shap.Explanation` object.
+                # We simply select the first row (our single sample) for the plot.
                 force_plot = shap.plots.force(
-                    explanation[0], # Select the explanation for our single prediction
-                    show=False 
+                    shap_values[0],
+                    show=False
                 )
 
                 # Use st.html to render the JS plot. We get the raw HTML from the plot object.
@@ -132,4 +128,3 @@ if st.button("Analyze URL"):
                 st.error(f"Failed to connect to the secure fetching service. Error: {e}")
             except Exception as e:
                 st.error(f"An unexpected error occurred during the analysis: {e}")
-
