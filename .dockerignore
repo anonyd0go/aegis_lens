@@ -2,6 +2,7 @@
 model_training_ds*
 model_showdown*
 xai_*
+aegis-fetcher
 
 # Ignore git and environment files
 .git
