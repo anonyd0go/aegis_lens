@@ -112,17 +112,19 @@ if st.button("Analyze URL"):
                 # To ensure consistency, we ALWAYS explain the prediction for the "Phishing" class (class 1).
                 # This means red arrows always indicate a feature increases the phishing score.
                 # We select the expected_value and shap_values for class 1.
-                expected_value_phishing = explainer.expected_value[1]
-                shap_values_phishing = shap_values[0]
+                expected_value = explainer.expected_value
+                shap_values_for_sample = shap_values[0]
 
-                fig, ax = plt.subplots(figsize=(10, 3))
-                shap.force_plot(
-                    expected_value_phishing,
-                    shap_values_phishing,
-                    features_df.iloc[0], # The feature values for our single prediction
+                # Generate the plot as a JavaScript object.
+                force_plot = shap.force_plot(
+                    expected_value,
+                    shap_values_for_sample,
+                    features_df.iloc[0],
+                    show=False # Prevent it from trying to display itself in a notebook
                 )
-                st.pyplot(fig, bbox_inches='tight', pad_inches=0.1)
-                plt.close(fig) # Close the plot to free up memory
+
+                # Use st.html to render the JS plot. We get the raw HTML from the plot object.
+                st.html(force_plot.html(), height=160)
 
             except requests.exceptions.Timeout:
                 st.error("The request to the fetching service timed out. The target website might be slow or unresponsive.")
