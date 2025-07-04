@@ -120,8 +120,6 @@ if st.button("Analyze URL"):
                     expected_value_phishing,
                     shap_values_phishing,
                     features_df.iloc[0], # The feature values for our single prediction
-                    matplotlib=True,
-                    show=False
                 )
                 st.pyplot(fig, bbox_inches='tight', pad_inches=0.1)
                 plt.close(fig) # Close the plot to free up memory
