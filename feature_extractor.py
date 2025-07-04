@@ -1,14 +1,12 @@
 # feature_extractor.py
-# This module contains the logic for converting a raw URL string into a
-# feature vector that can be fed into the AegisLens machine learning model.
+# This module contains all logic for converting a URL into a feature vector.
 
 import re
-from urllib.parse import urlparse
-import numpy as np
+from urllib.parse import urlparse, urljoin
+from bs4 import BeautifulSoup, Comment
 
-# --- Feature Order ---
-# This list defines the exact order of features required by the trained model.
-# The `extract_features` function will return the feature vector in this order.
+# This is the definitive
+# feature order for the production model, based on feature importance.
 FEATURE_ORDER = [
     'PctExtHyperlinks',
     'PctExtNullSelfRedirectHyperlinksRT',
@@ -26,149 +24,210 @@ FEATURE_ORDER = [
     'NumSensitiveWords'
 ]
 
-# ==============================================================================
-# I. URL-BASED FEATURE EXTRACTION
-# These functions parse the URL string itself. They are safe and do not
-# make any external network requests.
-# ==============================================================================
+# --- Part 1: URL-Based Feature Extractors ---
 
-def get_num_dash(url: str) -> int:
-    """Counts the number of hyphens '-' in the URL."""
+def get_num_dash(url):
+    """Counts the total number of hyphens '-' in the URL."""
     return url.count('-')
 
-def get_num_dots(url: str) -> int:
-    """Counts the number of dots '.' in the URL."""
+def get_num_dots(url):
+    """Counts the total number of dots '.' in the URL."""
     return url.count('.')
 
-def get_num_numeric_chars(url: str) -> int:
-    """Counts the number of numeric characters in the URL."""
-    return len(re.findall(r'[0-9]', url))
+def get_num_numeric_chars(url):
+    """Counts the total number of numeric characters (0-9) in the URL."""
+    return sum(c.isdigit() for c in url)
 
-def get_path_level(url: str) -> int:
-    """Calculates the depth of the URL path."""
-    try:
-        path = urlparse(url).path
-        # Count the number of slashes, excluding a trailing slash if present
-        return path.count('/') - (1 if path.endswith('/') and len(path) > 1 else 0)
-    except Exception:
+def get_path_level(parsed_url):
+    """Calculates the number of levels in the URL's path."""
+    path = parsed_url.path.strip('/')
+    return path.count('/') + 1 if path else 0
+
+def get_num_query_components(parsed_url):
+    """Counts the number of components in the query string."""
+    if not parsed_url.query:
         return 0
+    return parsed_url.query.count('&') + 1
 
-def get_num_query_components(url: str) -> int:
-    """Counts the number of components in the URL query string."""
-    try:
-        query = urlparse(url).query
-        if not query:
-            return 0
-        # Count ampersands and add 1 for the initial component
-        return query.count('&') + 1
-    except Exception:
+# --- Part 2: HTML Content-Based Feature Extractors ---
+
+def get_pct_ext_hyperlinks(soup, domain):
+    """Percentage of <a> tags pointing to a different domain. Range: 0.0 to 1.0"""
+    total_links = 0
+    external_links = 0
+    page_url = f"https://{domain}"
+    
+    for a in soup.find_all('a', href=True):
+        total_links += 1
+        href = a['href'].strip()
+        if not href:
+            continue
+
+        absolute_href = urljoin(page_url, href)
+        parsed_href = urlparse(absolute_href)
+        
+        if parsed_href.netloc and parsed_href.netloc != domain:
+            external_links += 1
+            
+    return (external_links / total_links) if total_links > 0 else 0.0
+
+def get_pct_ext_resource_urls(soup, domain):
+    """Percentage of resource URLs (img, script, link) from an external domain. Range: 0.0 to 1.0"""
+    total_resources = 0
+    external_resources = 0
+    page_url = f"https://{domain}"
+
+    for tag in soup.find_all(['img', 'script', 'link'], src=True) + soup.find_all('link', href=True):
+        attr = 'src' if tag.has_attr('src') else 'href'
+        url = tag.get(attr, '').strip()
+        if not url:
+            continue
+            
+        total_resources += 1
+        absolute_url = urljoin(page_url, url)
+        parsed_resource_url = urlparse(absolute_url)
+        
+        if parsed_resource_url.netloc and parsed_resource_url.netloc != domain:
+            external_resources += 1
+            
+    return (external_resources / total_resources) if total_resources > 0 else 0.0
+
+def get_pct_null_self_redirect_hyperlinks(soup):
+    """Percentage of <a> tags that are null or self-redirecting. Range: 0.0 to 1.0"""
+    total_links = 0
+    null_links = 0
+    for a in soup.find_all('a', href=True):
+        total_links += 1
+        href = a['href'].strip()
+        if not href or href == '#' or href.lower().startswith('javascript:void(0)'):
+            null_links += 1
+            
+    return (null_links / total_links) if total_links > 0 else 0.0
+
+def get_frequent_domain_name_mismatch(soup, domain):
+    """Checks if the page's domain appears infrequently as anchor text in hyperlinks."""
+    total_links_with_text = 0
+    domain_in_anchor_count = 0
+    domain_base = domain.replace('www.', '').split('.')[0]
+
+    for a in soup.find_all('a', href=True, string=True):
+        total_links_with_text += 1
+        if domain_base in a.string.lower():
+            domain_in_anchor_count += 1
+
+    if total_links_with_text == 0:
         return 0
+        
+    match_ratio = (domain_in_anchor_count / total_links_with_text)
+    return 1 if match_ratio < 0.20 else 0
 
-# ==============================================================================
-# II. HTML CONTENT-BASED FEATURE EXTRACTION (MVP SIMULATION)
-# As per our MVP strategy, we will NOT fetch live HTML content to avoid
-# security risks. This function simulates the HTML analysis based on
-# patterns in the URL string itself to return plausible feature values.
-# ==============================================================================
+def get_insecure_forms(soup, domain):
+    """Checks if any <form> submits to an external domain or over insecure HTTP."""
+    page_url = f"https://{domain}"
+    for form in soup.find_all('form', action=True):
+        action = form['action']
+        absolute_action = urljoin(page_url, action)
+        parsed_action = urlparse(absolute_action)
+        
+        if parsed_action.scheme == 'http' or (parsed_action.netloc and parsed_action.netloc != domain):
+            return 1
+    return 0
 
-def get_mocked_html_features(url: str) -> dict:
+def get_submit_info_to_email(soup):
+    """Checks if any <form> action submits data to a 'mailto:' address."""
+    for form in soup.find_all('form', action=True):
+        if form['action'].lower().startswith('mailto:'):
+            return 1
+    return 0
+
+def get_num_sensitive_words(soup):
+    """Counts the occurrence of sensitive words in the page's text content."""
+    sensitive_words = ["login", "password", "verify", "account", "update", "secure", "signin", "banking", "confirm"]
+    
+    for script_or_style in soup(["script", "style", "head", "title", "meta", "[document]"]):
+        script_or_style.extract()
+    
+    text = soup.get_text(separator=' ', strip=True).lower()
+    count = 0
+    for word in sensitive_words:
+        count += text.count(word)
+    return count
+
+def get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href):
+    """Risk-tiered version based on PctNullSelfRedirectHyperlinks. Thresholds are 0.0 to 1.0."""
+    if pct_null_href > 0.31:
+        return 1  # High Risk
+    elif 0.15 <= pct_null_href <= 0.31:
+        return 0  # Medium Risk
+    else:
+        return -1 # Low Risk
+
+def get_ext_meta_script_link_rt(soup, domain):
+    """Risk-tiered feature based on the percentage of external <script> and <link> tags. Thresholds are 0.0 to 1.0."""
+    total_resources = 0
+    external_resources = 0
+    page_url = f"https://{domain}"
+
+    for tag in soup.find_all(['script', 'link'], src=True) + soup.find_all('link', href=True):
+        attr = 'src' if tag.has_attr('src') else 'href'
+        url = tag.get(attr, '').strip()
+        if not url:
+            continue
+            
+        total_resources += 1
+        absolute_url = urljoin(page_url, url)
+        parsed_resource_url = urlparse(absolute_url)
+        
+        if parsed_resource_url.netloc and parsed_resource_url.netloc != domain:
+            external_resources += 1
+
+    ratio = (external_resources / total_resources) if total_resources > 0 else 0.0
+
+    if ratio >= 0.8125:
+        return 1  # High Risk
+    elif 0.61 <= ratio < 0.8125:
+        return 0  # Medium Risk
+    else:
+        return -1 # Low Risk
+
+# --- Main Orchestrator Function ---
+
+def extract_features(url, html_content):
     """
-    Simulates the extraction of HTML-based features.
-
-    Instead of fetching the URL, this function looks for suspicious patterns
-    in the URL string to generate a realistic but mocked set of feature values.
-    This is a security measure for the MVP.
-
-    Returns:
-        A dictionary containing the 9 simulated HTML-based features.
+    Extracts the 14 required features from a URL and its HTML content.
     """
-    # Baseline "medium risk" feature set
-    mocked_features = {
-        'PctExtHyperlinks': 0.50,
-        'PctExtResourceUrls': 0.65,
-        'PctNullSelfRedirectHyperlinks': 0.20,
-        'FrequentDomainNameMismatch': 0,
-        'InsecureForms': 0,
-        'SubmitInfoToEmail': 0,
-        'NumSensitiveWords': 2,
-        'PctExtNullSelfRedirectHyperlinksRT': 0,
-        'ExtMetaScriptLinkRT': 0
-    }
+    features = {}
+    
+    try:
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc or urlparse(f"http://{url}").netloc
+        soup = BeautifulSoup(html_content, 'html.parser')
 
-    # Simulate higher risk if suspicious terms are in the URL
-    url_lower = url.lower()
-    suspicious_terms = ['login', 'verify', 'account', 'update', 'secure', 'signin']
-    if any(term in url_lower for term in suspicious_terms):
-        mocked_features['NumSensitiveWords'] = 5
-        mocked_features['FrequentDomainNameMismatch'] = 1
-        mocked_features['InsecureForms'] = 1
-        mocked_features['PctExtHyperlinks'] = 0.85
-        mocked_features['ExtMetaScriptLinkRT'] = 1 # High risk tier
-        mocked_features['PctExtNullSelfRedirectHyperlinksRT'] = 1 # High risk tier
+        # --- Part 1: URL-Based Feature Extraction ---
+        features['NumDash'] = get_num_dash(url)
+        features['NumDots'] = get_num_dots(url)
+        features['NumNumericChars'] = get_num_numeric_chars(url)
+        features['PathLevel'] = get_path_level(parsed_url)
+        features['NumQueryComponents'] = get_num_query_components(parsed_url)
 
+        # --- Part 2: HTML-Based Feature Extraction ---
+        features['PctExtHyperlinks'] = get_pct_ext_hyperlinks(soup, domain)
+        features['PctExtResourceUrls'] = get_pct_ext_resource_urls(soup, domain)
+        
+        pct_null_href = get_pct_null_self_redirect_hyperlinks(soup)
+        features['PctNullSelfRedirectHyperlinks'] = pct_null_href
+        
+        features['FrequentDomainNameMismatch'] = get_frequent_domain_name_mismatch(soup, domain)
+        features['InsecureForms'] = get_insecure_forms(soup, domain)
+        features['SubmitInfoToEmail'] = get_submit_info_to_email(soup)
+        features['NumSensitiveWords'] = get_num_sensitive_words(soup)
+        
+        # Risk-tiered features
+        features['PctExtNullSelfRedirectHyperlinksRT'] = get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href)
+        features['ExtMetaScriptLinkRT'] = get_ext_meta_script_link_rt(soup, domain)
+        
+    except Exception as e:
+        print(f"Error during feature extraction for {url}: {e}")
+        return [0] * len(FEATURE_ORDER)
 
-    # Simulate risk if URL uses an IP address
-    # (A simple regex to check for IP-like structure)
-    if re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', url):
-        mocked_features['FrequentDomainNameMismatch'] = 1
-        mocked_features['ExtMetaScriptLinkRT'] = 1
-
-    return mocked_features
-
-# ==============================================================================
-# III. ORCHESTRATOR
-# This is the main public function for this module.
-# ==============================================================================
-
-def extract_features(url: str) -> np.ndarray:
-    """
-    Extracts all 14 features from a URL string and returns them as a
-    NumPy array in the correct order for the model.
-
-    Args:
-        url: The URL string to analyze.
-
-    Returns:
-        A NumPy array of shape (1, 14) containing the feature vector.
-    """
-    # 1. Initialize a dictionary to hold all feature values
-    all_features = {}
-
-    # 2. Extract URL-based features
-    all_features['NumDash'] = get_num_dash(url)
-    all_features['NumDots'] = get_num_dots(url)
-    all_features['NumNumericChars'] = get_num_numeric_chars(url)
-    all_features['PathLevel'] = get_path_level(url)
-    all_features['NumQueryComponents'] = get_num_query_components(url)
-
-    # 3. Get the simulated HTML-based features
-    html_features = get_mocked_html_features(url)
-    all_features.update(html_features)
-
-    # 4. Assemble the feature vector in the correct order
-    feature_vector = [all_features[feature_name] for feature_name in FEATURE_ORDER]
-
-    # 5. Return as a NumPy array suitable for the model's predict method
-    return np.array(feature_vector).reshape(1, -1)
-
-# --- Example Usage (for testing) ---
-if __name__ == '__main__':
-    # Example of a potentially malicious URL
-    test_url_phishing = "http://123.45.67.8/login-secure-update/index.html?user=test"
-    features_phishing = extract_features(test_url_phishing)
-    print(f"Testing a suspicious URL: {test_url_phishing}")
-    print(f"Feature Vector ({features_phishing.shape}):\n{features_phishing}")
-    print("-" * 20)
-    for name, value in zip(FEATURE_ORDER, features_phishing[0]):
-        print(f"{name}: {value}")
-
-    print("\n" + "="*50 + "\n")
-
-    # Example of a legitimate URL
-    test_url_legit = "https://www.google.com/search?q=machine+learning"
-    features_legit = extract_features(test_url_legit)
-    print(f"Testing a legitimate URL: {test_url_legit}")
-    print(f"Feature Vector ({features_legit.shape}):\n{features_legit}")
-    print("-" * 20)
-    for name, value in zip(FEATURE_ORDER, features_legit[0]):
-        print(f"{name}: {value}")
+    return [features.get(f, 0) for f in FEATURE_ORDER]
