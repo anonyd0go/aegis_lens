@@ -106,7 +106,7 @@ if st.button("Analyze URL"):
                     st.success(f"**Verdict: Legitimate** (Confidence: {prediction_proba[0]:.2%})")
 
                 st.subheader("Explanation of Verdict")
-                st.write("This force plot shows which features pushed the prediction towards 'Phishing' (red) or 'Legitimate' (blue). Features with larger impact are shown closer to the center.")
+                st.write("This force plot shows which features pushed the prediction towards 'Phishing' (red) or 'Legitimate' (blue). Features with larger impact are shown closer to the center.  The center line and value is the probability of the link being phishing (the closer to 1 the higher the probability)")
                 
                 # --- Consistent Force Plot using the modern SHAP API ---
                 # CORRECTED: The most robust method is to use the explainer to generate a full
