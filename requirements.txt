@@ -7,6 +7,7 @@
 
 # Core web framework for the user interface
 streamlit==1.46.1
+streamlit-shap==1.0.2
 
 # For numerical operations, the foundation of our ML libraries
 numpy==2.2.6
