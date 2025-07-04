@@ -111,10 +111,7 @@ if st.button("Analyze URL"):
                 # --- Consistent Force Plot using the modern SHAP API ---
                 # CORRECTED: The most robust method is to use the explainer to generate a full
                 # Explanation object, then select the first sample from it for plotting.
-                
-                # The `shap_values` object is now a `shap.Explanation` object.
-                # We simply select the first row (our single sample) for the plot.
-                st_shap(shap.plots.force(shap_values[0, :, 1]), height=160, width=1500)
+                st_shap(shap.plots.force(shap_values[0, :, 1]), height=160, width=2000)
 
 
             except requests.exceptions.Timeout:
