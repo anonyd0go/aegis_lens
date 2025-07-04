@@ -114,7 +114,7 @@ if st.button("Analyze URL"):
                 
                 # The `shap_values` object is now a `shap.Explanation` object.
                 # We simply select the first row (our single sample) for the plot.
-                st_shap(shap.plots.force(shap_values[0, :, 1]), height=160, width=500)
+                st_shap(shap.plots.force(shap_values[0, :, 1]), height=160, width=1500)
 
 
             except requests.exceptions.Timeout:
