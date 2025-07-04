@@ -21,16 +21,16 @@ st.set_page_config(
 )
 
 # Function to load and inject CSS for styling.
-def load_css(file_name):
-    """Loads a CSS file and injects it into the Streamlit app."""
-    try:
-        with open(file_name) as f:
-            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-    except FileNotFoundError:
-        st.warning(f"CSS file not found: {file_name}. Using default styles.")
-
+#def load_css(file_name):
+#    """Loads a CSS file and injects it into the Streamlit app."""
+#    try:
+#        with open(file_name) as f:
+#            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+#    except FileNotFoundError:
+#        st.warning(f"CSS file not found: {file_name}. Using default styles.")
+#
 # Apply the custom CSS from your project.
-load_css("styles/style.css")
+#load_css("styles/style.css")
 
 
 # --- Asset Loading with Caching ---
