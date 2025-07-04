@@ -2,184 +2,133 @@
 # Main Streamlit application file for AegisLens.
 
 import streamlit as st
-import numpy as np
+import requests
+import pandas as pd
+import os
 import shap
-import streamlit.components.v1 as components
+import matplotlib.pyplot as plt
+from feature_extractor import extract_features, FEATURE_ORDER
+from model_loader import load_model, load_explainer
 
-# Import our custom modules
-import model_loader
-import feature_extractor
-
-# --- Page Configuration ---
-# Set the page title, icon, and layout.
+# --- Page Configuration and Styling ---
+# Set page config once at the top of the script.
 st.set_page_config(
-    page_title="AegisLens - Explainable Phishing Detector",
+    page_title="AegisLens Phishing Detector",
     page_icon="🛡️",
-    layout="wide"
+    layout="centered",
+    initial_sidebar_state="auto"
 )
 
-# --- Function to load external CSS ---
+# Function to load and inject CSS for styling.
 def load_css(file_name):
-    """
-    Loads an external CSS file and injects it into the Streamlit app.
-    """
+    """Loads a CSS file and injects it into the Streamlit app."""
     try:
         with open(file_name) as f:
             st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
     except FileNotFoundError:
-        st.error(f"CSS file not found: {file_name}. Make sure the 'styles' directory and 'style.css' file exist.")
+        st.warning(f"CSS file not found: {file_name}. Using default styles.")
+
+# Apply the custom CSS from your project.
+load_css("styles/style.css")
 
 
-# --- Asset Loading ---
+# --- Asset Loading with Caching ---
+# Use st.cache_resource to load the model and explainer only once.
+# This significantly improves performance.
 @st.cache_resource
 def load_assets():
-    """
-    Loads the ML model and SHAP explainer using streamlit's cache
-    to prevent reloading on every interaction.
-    """
-    model = model_loader.load_model()
-    explainer = model_loader.load_explainer()
+    """Loads the model and explainer using caching."""
+    model = load_model()
+    explainer = load_explainer()
     return model, explainer
 
-# --- Backend Analysis Function ---
-def run_analysis(url, model, explainer):
-    """
-    Performs the full analysis pipeline on a given URL.
-    
-    Args:
-        url (str): The URL to analyze.
-        model: The trained machine learning model.
-        explainer: The SHAP explainer object.
-        
-    Returns:
-        A dictionary containing all results needed for display.
-    """
-    # 1. Extract features from the URL.
-    feature_vector = feature_extractor.extract_features(url)
+try:
+    model, explainer = load_assets()
+except FileNotFoundError:
+    st.error("Model or explainer assets not found. Ensure 'models/url_model.joblib' and 'models/url_explainer.joblib' exist.")
+    st.stop()
 
-    # 2. Predict using the model's predict_proba method.
-    prediction_proba = model.predict_proba(feature_vector)
-    confidence = prediction_proba[0][1]  # Probability of being phishing
-    prediction = 1 if confidence > 0.5 else 0
 
-    # 3. Generate SHAP explanation for the prediction.
-    shap_values = explainer.shap_values(feature_vector)
-    
-    # We are interested in the "phishing" class (index 1).
-    shap_values_for_phishing = shap_values[0, :, 1]
-    base_value_for_phishing = explainer.expected_value[1]
+# --- Configuration for Disco.Cloud ---
+# Use os.getenv() to read the environment variable.
+CLOUDFLARE_WORKER_URL = os.getenv("CF_WORKER_URL")
 
-    return {
-        "prediction": prediction,
-        "confidence": confidence,
-        "feature_vector": feature_vector[0],
-        "shap_values": shap_values_for_phishing,
-        "base_value": base_value_for_phishing,
-        "feature_names": feature_extractor.FEATURE_ORDER,
-    }
+if not CLOUDFLARE_WORKER_URL:
+    st.error("The CF_WORKER_URL environment variable is not set. The application cannot perform live analysis.")
+    st.info("Please set the CF_WORKER_URL environment variable in your Disco.Cloud application settings.")
+    st.stop()
 
-# --- UI Display Function ---
-def display_results_area(results):
-    """
-    Renders the analysis results in the UI.
-    
-    Args:
-        results (dict): The dictionary returned by run_analysis.
-    """
-    st.markdown("---")
-    st.header("Analysis Results")
+# --- UI Elements ---
+st.title("🛡️ AegisLens Phishing Detector")
+st.write("Enter a URL to analyze its content and structure for phishing threats. Our AI will provide a verdict and explain its reasoning.")
 
-    col1, col2 = st.columns([1, 2])
+user_url = st.text_input("URL to Analyze:", placeholder="https://example.com")
 
-    with col1:
-        # Display verdict based on prediction
-        if results["prediction"] == 1:  # Phishing
-            st.markdown(
-                '<div class="verdict-container verdict-phishing">'
-                '<p class="verdict-text" style="color:#E01E5A;">Phishing Detected</p>'
-                f'<p class="confidence-text" style="color:#FFFFFF;">Confidence: {results["confidence"]:.2%}</p>'
-                '</div>',
-                unsafe_allow_html=True
-            )
-        else:  # Legitimate
-            st.markdown(
-                '<div class="verdict-container verdict-safe">'
-                '<p class="verdict-text" style="color:#4A90E2;">Looks Safe</p>'
-                f'<p class="confidence-text" style="color:#8892B0;">Phishing Confidence: {results["confidence"]:.2%}</p>'
-                '</div>',
-                unsafe_allow_html=True
-            )
-
-    with col2:
-        st.info(
-            "**How to read the plot below:**\n"
-            "- **Features in red** pushed the prediction towards 'Phishing'.\n"
-            "- **Features in blue** pushed it towards 'Safe'.\n"
-            "- The **length of the bar** shows the magnitude of the feature's impact."
-        )
-    
-    st.subheader("Prediction Explanation")
-    # Create the SHAP force plot object
-    force_plot = shap.force_plot(
-        base_value=results["base_value"],
-        shap_values=results["shap_values"],
-        features=results["feature_vector"],
-        feature_names=results["feature_names"]
-    )
-    # Render the plot using a wrapper function
-    shap_html = f"<head>{shap.getjs()}</head><body>{force_plot.html()}</body>"
-    components.html(shap_html, height=150, scrolling=True)
-
-# --- Main Application ---
-
-# Load CSS and Machine Learning assets
-load_css("styles/style.css")
-model, explainer = load_assets()
-
-# Initialize session state to store results
-if 'analysis_results' not in st.session_state:
-    st.session_state['analysis_results'] = None
-
-# --- Sidebar UI ---
-with st.sidebar:
-    st.image("assets/logo.png", width=150) # Placeholder logo
-    st.title("AegisLens")
-    st.info(
-        "This application uses a Random Forest model to detect phishing URLs "
-        "and SHAP to explain its predictions."
-    )
-    st.markdown("---")
-    st.header("Privacy Notice")
-    st.success(
-        "**Your data is safe.** We do not store or log any URLs you analyze. "
-        "The analysis is performed in-memory and is stateless."
-    )
-
-# --- Main Page UI ---
-st.markdown('<p class="title">AegisLens</p>', unsafe_allow_html=True)
-st.markdown('<p class="tagline">Beyond Detection. True Understanding.</p>', unsafe_allow_html=True)
-
-# Use a form for the input to prevent reruns on every key press
-with st.form("url_analysis_form"):
-    url_to_check = st.text_input(
-        "Enter the URL you want to analyze:",
-        placeholder="e.g., https://www.example.com"
-    )
-    submitted = st.form_submit_button("Analyze URL")
-
-# Logic to run when the form is submitted
-if submitted:
-    if url_to_check and url_to_check.strip() and (model and explainer):
-        with st.spinner('Extracting features and analyzing...'):
-            # Store results in session state
-            st.session_state['analysis_results'] = run_analysis(url_to_check, model, explainer)
-    elif not (model and explainer):
-         st.error("Model or SHAP explainer not loaded. Please check the logs.")
-         st.session_state['analysis_results'] = None # Clear previous results
+if st.button("Analyze URL"):
+    if not user_url:
+        st.warning("Please enter a URL.")
     else:
-        st.error("Please enter a URL to analyze.")
-        st.session_state['analysis_results'] = None # Clear previous results
+        # Use a spinner to provide feedback during the network call.
+        with st.spinner(f"Securely fetching and analyzing {user_url}..."):
+            try:
+                # Step 1: Call the secure Cloudflare Worker
+                payload = {'url': user_url}
+                response = requests.post(CLOUDFLARE_WORKER_URL, json=payload, timeout=20)
+                response.raise_for_status()
 
-# Display the results if they exist in the session state
-if st.session_state['analysis_results']:
-    display_results_area(st.session_state['analysis_results'])
+                result = response.json()
+                html_content = result.get('html')
+
+                if not html_content:
+                    st.error("Could not retrieve content. The site may be down, blocking requests, or returned empty content.")
+                    st.stop()
+
+                # Step 2: Extract features. The extractor returns a list.
+                feature_vector = extract_features(user_url, html_content)
+                
+                # Create a Pandas DataFrame to preserve feature names for the explainer.
+                features_df = pd.DataFrame([feature_vector], columns=FEATURE_ORDER)
+
+                # Step 3: Get prediction and explanation
+                prediction_proba = model.predict_proba(features_df)[0]
+                prediction = model.predict(features_df)[0]
+                
+                # For binary classifiers, shap_values is a list of two arrays:
+                # one for class 0 (Legitimate) and one for class 1 (Phishing).
+                shap_values = explainer.shap_values(features_df)
+                
+                # --- Display Results ---
+                st.subheader("Analysis Results")
+                
+                if prediction == 1:
+                    st.error(f"**Verdict: Phishing** (Confidence: {prediction_proba[1]:.2%})")
+                else:
+                    st.success(f"**Verdict: Legitimate** (Confidence: {prediction_proba[0]:.2%})")
+
+                st.subheader("Explanation of Verdict")
+                st.write("This force plot shows which features pushed the prediction towards 'Phishing' (red) or 'Legitimate' (blue). Features with larger impact are shown closer to the center.")
+                
+                # --- Consistent Force Plot ---
+                # To ensure consistency, we ALWAYS explain the prediction for the "Phishing" class (class 1).
+                # This means red arrows always indicate a feature increases the phishing score.
+                # We select the expected_value and shap_values for class 1.
+                expected_value_phishing = explainer.expected_value[1]
+                shap_values_phishing = shap_values[1][0] # Index [1] for class 1, [0] for the first sample.
+
+                fig, ax = plt.subplots(figsize=(10, 3))
+                shap.force_plot(
+                    expected_value_phishing,
+                    shap_values_phishing,
+                    features_df.iloc[0], # The feature values for our single prediction
+                    matplotlib=True,
+                    show=False
+                )
+                st.pyplot(fig, bbox_inches='tight', pad_inches=0.1)
+                plt.close(fig) # Close the plot to free up memory
+
+            except requests.exceptions.Timeout:
+                st.error("The request to the fetching service timed out. The target website might be slow or unresponsive.")
+            except requests.exceptions.RequestException as e:
+                st.error(f"Failed to connect to the secure fetching service. Error: {e}")
+            except Exception as e:
+                st.error(f"An unexpected error occurred during the analysis: {e}")
