@@ -114,8 +114,8 @@ if st.button("Analyze URL"):
                 # The `shap_values` object is now a `shap.Explanation` object.
                 # We simply select the first row (our single sample) for the plot.
                 force_plot = shap.plots.force(
-                    explainer.expected_value[0],
-                    shap_values[..., 0]
+                    explainer.expected_value[1],
+                    shap_values[..., 1]
                 )
 
                 # Use st.html to render the JS plot. We get the raw HTML from the plot object.
