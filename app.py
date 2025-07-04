@@ -2,6 +2,7 @@
 # Main Streamlit application file for AegisLens.
 
 import streamlit as st
+from streamlit_shap import st_shap
 import requests
 import pandas as pd
 import os
@@ -113,13 +114,7 @@ if st.button("Analyze URL"):
                 
                 # The `shap_values` object is now a `shap.Explanation` object.
                 # We simply select the first row (our single sample) for the plot.
-                force_plot = shap.plots.force(
-                    explainer.expected_value,
-                    shap_values[..., 1]
-                )
-
-                # Use st.html to render the JS plot. We get the raw HTML from the plot object.
-                st.html(force_plot.html(), height=160)
+                st_shap(shap.plots.force(explainer.expected_value, shap_values[0, :, 1]), height=160)
 
 
             except requests.exceptions.Timeout:
