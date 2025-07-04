@@ -113,6 +113,11 @@ if st.button("Analyze URL"):
                 # Explanation object, then select the first sample from it for plotting.
                 st_shap(shap.plots.force(shap_values[0, :, 1]))
 
+                # --- NEW: Debugging Expander ---
+                with st.expander("Debug: Show Features"):
+                    st.write("The following are the raw feature values fed to the model:")
+                    st.dataframe(features_df.T.rename(columns={0: 'Value'}))
+
 
             except requests.exceptions.Timeout:
                 st.error("The request to the fetching service timed out. The target website might be slow or unresponsive.")
