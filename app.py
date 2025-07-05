@@ -70,10 +70,17 @@ if st.button("Analyze URL"):
         st.warning("Please enter a URL.")
     else:
         # Use a spinner to provide feedback during the network call.
+        # --- NEW: URL Normalization Step ---
+        # Prepend 'https://' if the URL does not have a scheme.
+        # This makes the input robust to variations like 'google.com'.
+        normalized_url = user_url.strip()
+        if not normalized_url.startswith('http://') and not normalized_url.startswith('https://'):
+            normalized_url = 'https://' + normalized_url
+
         with st.spinner(f"Securely fetching and analyzing {user_url}..."):
             try:
                 # Step 1: Call the secure Cloudflare Worker
-                payload = {'url': user_url}
+                payload = {'url': normalized_url}
                 response = requests.post(CLOUDFLARE_WORKER_URL, json=payload, timeout=20)
                 response.raise_for_status()
 
@@ -85,7 +92,7 @@ if st.button("Analyze URL"):
                     st.stop()
 
                 # Step 2: Extract features. The extractor returns a list.
-                feature_vector = extract_features(user_url, html_content)
+                feature_vector = extract_features(normalized_url, html_content)
                 
                 # Create a Pandas DataFrame to preserve feature names for the explainer.
                 features_df = pd.DataFrame([feature_vector], columns=FEATURE_ORDER)
