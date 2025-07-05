@@ -122,6 +122,6 @@ if st.button("Analyze URL"):
             except requests.exceptions.Timeout:
                 st.error("The request to the fetching service timed out. The target website might be slow or unresponsive.")
             except requests.exceptions.RequestException as e:
-                st.error(f"Failed to connect to the secure fetching service. Error: {e}")
+                st.error(f"Failed to connect to the secure fetching service. Error: {e[:23]}")
             except Exception as e:
                 st.error(f"An unexpected error occurred during the analysis: {e}")
