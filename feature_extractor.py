@@ -200,7 +200,11 @@ def extract_features(url, html_content):
     
     try:
         parsed_url = urlparse(url)
-        domain = parsed_url.netloc or urlparse(f"http://{url}").netloc
+        # Defensive check to ensure domain is always extracted correctly.
+        domain = parsed_url.netloc
+        if not domain:
+            return [0] * len(FEATURE_ORDER) # Return default on parsing failure
+
         soup = BeautifulSoup(html_content, 'html.parser')
 
         # --- Part 1: URL-Based Feature Extraction ---
