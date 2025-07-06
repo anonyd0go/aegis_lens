@@ -203,7 +203,7 @@ st.markdown(
     AegisLens uses machine learning and explainable AI to detect phishing attempts. 
     Always verify URLs carefully, especially for sensitive accounts.
     <br>
-    <a href='https://github.com/your-repo/aegislens' style='color: #4A90E2;'>Learn more about our technology</a>
+    <a href='https://github.com/anonyd0go/aegislens' style='color: #4A90E2;'>Learn more about our technology</a>
     </div>
     """,
     unsafe_allow_html=True
