@@ -24,6 +24,54 @@ FEATURE_ORDER = [
     'NumSensitiveWords'
 ]
 
+# --- IMPROVEMENT 1: Trusted Domain Allowlist ---
+# Major legitimate sites that should have relaxed feature extraction
+TRUSTED_DOMAINS = {
+    # Search engines and major platforms
+    'google.com', 'www.google.com', 'accounts.google.com', 'mail.google.com',
+    'youtube.com', 'www.youtube.com',
+    'bing.com', 'www.bing.com',
+    
+    # Social media
+    'facebook.com', 'www.facebook.com', 'm.facebook.com',
+    'twitter.com', 'www.twitter.com', 'x.com', 'www.x.com',
+    'linkedin.com', 'www.linkedin.com',
+    'instagram.com', 'www.instagram.com',
+    
+    # E-commerce and payment
+    'amazon.com', 'www.amazon.com',
+    'ebay.com', 'www.ebay.com',
+    'paypal.com', 'www.paypal.com',
+    'stripe.com', 'www.stripe.com',
+    
+    # Banking (major US banks)
+    'chase.com', 'www.chase.com',
+    'bankofamerica.com', 'www.bankofamerica.com',
+    'wellsfargo.com', 'www.wellsfargo.com',
+    'citi.com', 'www.citi.com',
+    
+    # Tech companies
+    'microsoft.com', 'www.microsoft.com', 'login.microsoftonline.com',
+    'apple.com', 'www.apple.com', 'appleid.apple.com',
+    'github.com', 'www.github.com',
+    'gitlab.com', 'www.gitlab.com',
+    
+    # Email providers
+    'gmail.com', 'mail.google.com',
+    'outlook.com', 'outlook.live.com', 'login.live.com',
+    'yahoo.com', 'mail.yahoo.com',
+    
+    # Cloud services
+    'dropbox.com', 'www.dropbox.com',
+    'box.com', 'www.box.com',
+    'drive.google.com',
+    'onedrive.live.com',
+}
+
+def is_trusted_domain(domain):
+    """Check if a domain is in our trusted allowlist."""
+    return domain.lower() in TRUSTED_DOMAINS
+
 # --- Part 1: URL-Based Feature Extractors ---
 
 def get_num_dash(url):
@@ -105,21 +153,44 @@ def get_pct_null_self_redirect_hyperlinks(soup):
     return (null_links / total_links) if total_links > 0 else 0.0
 
 def get_frequent_domain_name_mismatch(soup, domain):
-    """Checks if the page's domain appears infrequently as anchor text in hyperlinks."""
+    """
+    IMPROVED: Checks if the page's domain appears infrequently as anchor text in hyperlinks.
+    Now accounts for icon-based navigation and trusted domains.
+    """
+    # For trusted domains, we expect less text-based navigation
+    if is_trusted_domain(domain):
+        return 0
+    
     total_links_with_text = 0
     domain_in_anchor_count = 0
     domain_base = domain.replace('www.', '').split('.')[0]
 
-    for a in soup.find_all('a', href=True, string=True):
-        total_links_with_text += 1
-        if domain_base in a.string.lower():
+    # Also check for aria-label and title attributes (common in icon navigation)
+    for a in soup.find_all('a', href=True):
+        link_text = ""
+        
+        # Check actual text content
+        if a.string:
+            link_text = a.string.lower()
+            total_links_with_text += 1
+        # Check aria-label
+        elif a.get('aria-label'):
+            link_text = a.get('aria-label', '').lower()
+            total_links_with_text += 1
+        # Check title attribute
+        elif a.get('title'):
+            link_text = a.get('title', '').lower()
+            total_links_with_text += 1
+            
+        if link_text and domain_base in link_text:
             domain_in_anchor_count += 1
 
     if total_links_with_text == 0:
         return 0
         
     match_ratio = (domain_in_anchor_count / total_links_with_text)
-    return 1 if match_ratio < 0.20 else 0
+    # Increased threshold for modern sites with icon navigation
+    return 1 if match_ratio < 0.10 else 0
 
 def get_insecure_forms(soup, domain):
     """Checks if any <form> submits to an external domain or over insecure HTTP."""
@@ -141,32 +212,79 @@ def get_submit_info_to_email(soup):
     return 0
 
 def get_num_sensitive_words(soup):
-    """Counts the occurrence of sensitive words in the page's text content."""
+    """
+    IMPROVED: Now returns density (sensitive words / total words) instead of raw count.
+    Also adjusts for trusted domains.
+    """
     sensitive_words = ["login", "password", "verify", "account", "update", "secure", "signin", "banking", "confirm"]
     
+    # For trusted domains, use a more specific set of suspicious phrases
+    if is_trusted_domain(domain):
+        # These are more indicative of phishing on trusted domains
+        sensitive_words = ["suspended", "locked", "verify immediately", "urgent action", "click here immediately",
+                          "confirm identity", "unusual activity", "temporary suspension"]
+    
+    # Remove script, style, and metadata
     for script_or_style in soup(["script", "style", "head", "title", "meta", "[document]"]):
         script_or_style.extract()
     
     text = soup.get_text(separator=' ', strip=True).lower()
+    words = text.split()
+    total_words = len(words)
+    
+    if total_words == 0:
+        return 0
+    
+    # Count occurrences
     count = 0
     for word in sensitive_words:
         count += text.count(word)
-    return count
+    
+    # Return density instead of raw count
+    # Cap at 1.0 to maintain expected range
+    density = min(count / total_words, 1.0)
+    
+    # For model compatibility, scale to similar range as before
+    # Average legitimate page might have 5-10 sensitive words in 500-1000 words
+    # So multiply by 100 to get similar scale to raw count
+    return density * 100
 
 def get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href):
-    """Risk-tiered version based on PctNullSelfRedirectHyperlinks. Thresholds are 0.0 to 1.0."""
-    if pct_null_href > 0.31:
-        return 1  # High Risk
-    elif 0.15 <= pct_null_href <= 0.31:
-        return 0  # Medium Risk
+    """
+    IMPROVED: Risk-tiered version with relaxed thresholds for trusted domains.
+    """
+    if is_trusted_domain(domain):
+        # Trusted domains often have more JS-based navigation
+        if pct_null_href > 0.5:  # Much higher threshold
+            return 1  # High Risk
+        elif 0.3 <= pct_null_href <= 0.5:
+            return 0  # Medium Risk
+        else:
+            return -1 # Low Risk
     else:
-        return -1 # Low Risk
+        # Original thresholds for unknown domains
+        if pct_null_href > 0.31:
+            return 1  # High Risk
+        elif 0.15 <= pct_null_href <= 0.31:
+            return 0  # Medium Risk
+        else:
+            return -1 # Low Risk
 
 def get_ext_meta_script_link_rt(soup, domain):
-    """Risk-tiered feature based on the percentage of external <script> and <link> tags. Thresholds are 0.0 to 1.0."""
+    """
+    IMPROVED: Risk-tiered feature with consideration for CDN usage by trusted domains.
+    """
     total_resources = 0
     external_resources = 0
     page_url = f"https://{domain}"
+    
+    # Common legitimate CDNs
+    legitimate_cdns = {
+        'googleapis.com', 'gstatic.com', 'cloudflare.com', 'jsdelivr.net',
+        'unpkg.com', 'cdnjs.cloudflare.com', 'maxcdn.bootstrapcdn.com',
+        'ajax.googleapis.com', 'fonts.googleapis.com', 'fontawesome.com',
+        'jquery.com', 'bootstrapcdn.com', 'cloudfront.net'
+    }
 
     for tag in soup.find_all(['script', 'link'], src=True) + soup.find_all('link', href=True):
         attr = 'src' if tag.has_attr('src') else 'href'
@@ -179,22 +297,33 @@ def get_ext_meta_script_link_rt(soup, domain):
         parsed_resource_url = urlparse(absolute_url)
         
         if parsed_resource_url.netloc and parsed_resource_url.netloc != domain:
-            external_resources += 1
+            # Check if it's from a legitimate CDN
+            is_cdn = any(cdn in parsed_resource_url.netloc for cdn in legitimate_cdns)
+            if not is_cdn or not is_trusted_domain(domain):
+                external_resources += 1
 
     ratio = (external_resources / total_resources) if total_resources > 0 else 0.0
-
-    if ratio >= 0.8125:
-        return 1  # High Risk
-    elif 0.61 <= ratio < 0.8125:
-        return 0  # Medium Risk
+    
+    # Adjusted thresholds for trusted domains
+    if is_trusted_domain(domain):
+        if ratio >= 0.9:  # Very high threshold for trusted domains
+            return 1  # High Risk
+        else:
+            return -1 # Low Risk for trusted domains
     else:
-        return -1 # Low Risk
+        # Original thresholds for unknown domains
+        if ratio >= 0.8125:
+            return 1  # High Risk
+        elif 0.61 <= ratio < 0.8125:
+            return 0  # Medium Risk
+        else:
+            return -1 # Low Risk
 
 # --- Main Orchestrator Function ---
 
 def extract_features(url, html_content):
     """
-    Extracts the 14 required features from a URL and its HTML content.
+    IMPROVED: Extracts features with consideration for trusted domains to reduce false positives.
     """
     features = {}
     
@@ -226,7 +355,7 @@ def extract_features(url, html_content):
         features['SubmitInfoToEmail'] = get_submit_info_to_email(soup)
         features['NumSensitiveWords'] = get_num_sensitive_words(soup)
         
-        # Risk-tiered features
+        # Risk-tiered features (now domain-aeare)
         features['PctExtNullSelfRedirectHyperlinksRT'] = get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href)
         features['ExtMetaScriptLinkRT'] = get_ext_meta_script_link_rt(soup, domain)
         
