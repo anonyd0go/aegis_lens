@@ -211,7 +211,7 @@ def get_submit_info_to_email(soup):
             return 1
     return 0
 
-def get_num_sensitive_words(soup):
+def get_num_sensitive_words(soup, domain):
     """
     IMPROVED: Now returns density (sensitive words / total words) instead of raw count.
     Also adjusts for trusted domains.
@@ -249,7 +249,7 @@ def get_num_sensitive_words(soup):
     # So multiply by 100 to get similar scale to raw count
     return density * 100
 
-def get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href):
+def get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href, domain):
     """
     IMPROVED: Risk-tiered version with relaxed thresholds for trusted domains.
     """
