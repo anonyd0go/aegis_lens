@@ -6,6 +6,7 @@ import streamlit as st
 from streamlit_shap import st_shap
 import requests
 import pandas as pd
+from bs4 import BeautifulSoup
 import os
 import shap
 from urllib.parse import urlparse
@@ -59,6 +60,44 @@ def check_allowlist(url):
     except:
         return False
 
+def is_error_page(html_content):
+    """Detect common error pages that shouldn't be analyzed"""
+    error_indicators = [
+        # Chrome error pages
+        "This site can't be reached",
+        "DNS_PROBE_FINISHED",
+        "ERR_NAME_NOT_RESOLVED",
+        # Generic error pages
+        "404 Not Found",
+        "403 Forbidden", 
+        "500 Internal Server Error",
+        "Page not found",
+        "The requested URL was not found",
+        # Parking pages
+        "This domain is for sale",
+        "Domain parked",
+        "Under construction",
+        # Cloudflare errors
+        "Cloudflare Ray ID",
+        "Error 1001",
+        # Takedown notices
+        "This website has been reported",
+        "suspended",
+        "Account Suspended"
+    ]
+    
+    html_lower = html_content.lower()
+    for indicator in error_indicators:
+        if indicator.lower() in html_lower:
+            return True, indicator
+    
+    # Also check for extremely short content that's likely an error
+    text_content = BeautifulSoup(html_content, 'html.parser').get_text(strip=True)
+    if len(text_content) < 50 and 'error' in text_content.lower():
+        return True, "Minimal error page"
+    
+    return False, None
+
 # --- UI Elements ---
 st.title("🛡️ AegisLens Phishing Detector")
 st.write("Enter a URL to analyze its content and structure for phishing threats. Our AI will provide a verdict and explain its reasoning.")
@@ -111,6 +150,21 @@ if st.button("Analyze URL"):
                     if not html_content:
                         st.error("Could not retrieve content. The site may be down, blocking requests, or returned empty content.")
                         st.stop()
+                    
+                    if html_content:
+                        # Check for error pages
+                        is_error, error_type = is_error_page(html_content)
+                        if is_error:
+                            st.error(f"⚠️ Cannot analyze: {error_type}")
+                            st.info("""
+                            This URL appears to be offline or blocking our analysis. This could mean:
+                            • The phishing site has already been taken down
+                            • The site is blocking automated access
+                            • There's a DNS or routing issue
+                            
+                            For PhishTank URLs, please verify the site is marked as 'Online' and was recently verified.
+                            """)
+                            st.stop()
 
                     # Step 2: Extract features
                     feature_vector = extract_features(normalized_url, html_content)
