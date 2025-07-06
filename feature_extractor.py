@@ -353,10 +353,10 @@ def extract_features(url, html_content):
         features['FrequentDomainNameMismatch'] = get_frequent_domain_name_mismatch(soup, domain)
         features['InsecureForms'] = get_insecure_forms(soup, domain)
         features['SubmitInfoToEmail'] = get_submit_info_to_email(soup)
-        features['NumSensitiveWords'] = get_num_sensitive_words(soup)
+        features['NumSensitiveWords'] = get_num_sensitive_words(soup, domain)
         
         # Risk-tiered features (now domain-aeare)
-        features['PctExtNullSelfRedirectHyperlinksRT'] = get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href)
+        features['PctExtNullSelfRedirectHyperlinksRT'] = get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href, domain)
         features['ExtMetaScriptLinkRT'] = get_ext_meta_script_link_rt(soup, domain)
         
     except Exception as e:
