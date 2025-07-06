@@ -64,7 +64,7 @@ st.title("🛡️ AegisLens Phishing Detector")
 st.write("Enter a URL to analyze its content and structure for phishing threats. Our AI will provide a verdict and explain its reasoning.")
 
 # Add an info box about trusted domains
-with st.expander("ℹ️ About Trusted Domains"):
+with st.expander("About Trusted Domains"):
     st.info("""
     AegisLens recognizes major legitimate websites and applies adjusted analysis rules to reduce false positives. 
     Trusted domains include major search engines, social media platforms, banks, and tech companies.
@@ -95,7 +95,7 @@ if st.button("Analyze URL"):
         if check_allowlist(normalized_url) and not force_detailed:
             st.success(f"**Verdict: Legitimate** (Trusted Domain)")
             st.info(f"✅ This domain is recognized as a major legitimate website. While AegisLens trusts this domain, always verify you're on the correct URL and not a lookalike domain.")
-            st.write("💡 **Tip:** To see the detailed AI analysis for this trusted domain, check the 'Force detailed analysis' box above and click Analyze again.")
+            st.write("**Tip:** To see the detailed AI analysis for this trusted domain, check the 'Force detailed analysis' box above and click Analyze again.")
         else:
             # Perform full analysis
             with st.spinner(f"Securely fetching and analyzing {normalized_url}..."):
