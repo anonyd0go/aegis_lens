@@ -1,6 +1,6 @@
 /**
  * Cloudflare Worker to securely fetch HTML using the Browserless.io service.
- * This acts as a secure proxy to hide our Browserless.io API key.
+ * IMPROVED: Better handling of phishing sites and error detection
  */
 
 export default {
@@ -25,8 +25,7 @@ export default {
         });
       }
 
-      // --- Step 3: Call the Browserless.io API ---
-      // The BROWSERLESS_API_KEY secret must be set in the worker's settings.
+      // --- Step 3: Call the Browserless.io API with improved options ---
       const apiKey = env.BROWSERLESS_API_KEY;
 
       if (!apiKey) {
@@ -36,10 +35,9 @@ export default {
         });
       }
 
-      // Construct the Browserless.io API endpoint URL
       const browserlessApiUrl = `https://production-sfo.browserless.io/content?token=${apiKey}`;
 
-      // Make the secure call to the Browserless API
+      // Make the secure call to the Browserless API with better options
       const response = await fetch(browserlessApiUrl, {
         method: 'POST',
         headers: {
@@ -48,8 +46,20 @@ export default {
         body: JSON.stringify({
           "url": url,
           "gotoOptions": {
-            "waitUntil": "networkidle0" // Wait until the page is fully loaded
-          }
+            "waitUntil": "networkidle0",
+            "timeout": 30000 // 30 seconds
+          },
+          // Add viewport to mimic real browser
+          "viewport": {
+            "width": 1366,
+            "height": 768
+          },
+          // Set a real user agent
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+          // Don't block any resources - we want to see everything
+          "blockResourceTypes": [],
+          // Follow redirects
+          "followRedirect": true
         }),
       });
 
@@ -57,7 +67,11 @@ export default {
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`Error from Browserless API: ${errorText}`);
-        return new Response(JSON.stringify({ error: 'Failed to fetch content via Browserless', details: errorText }), {
+        return new Response(JSON.stringify({ 
+          error: 'Failed to fetch content via Browserless', 
+          details: errorText,
+          statusCode: response.status 
+        }), {
           status: response.status,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -65,20 +79,41 @@ export default {
 
       // The HTML content is the body of the successful response
       const html = await response.text();
+      
+      // Check if we got an error page
+      const errorIndicators = [
+        'This site can\'t be reached',
+        'DNS_PROBE_FINISHED',
+        '404 Not Found',
+        'Page not found',
+        'Domain for sale',
+        'Account Suspended'
+      ];
+      
+      const isErrorPage = errorIndicators.some(indicator => 
+        html.toLowerCase().includes(indicator.toLowerCase())
+      );
 
       // --- Step 5: Return the HTML to the Original Caller ---
-      return new Response(JSON.stringify({ html: html }), {
+      return new Response(JSON.stringify({ 
+        html: html,
+        isErrorPage: isErrorPage,
+        contentLength: html.length,
+        url: url
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
 
     } catch (error) {
       console.error('Error processing request:', error);
-      return new Response(JSON.stringify({ error: 'Failed to process request', details: error.message }), {
+      return new Response(JSON.stringify({ 
+        error: 'Failed to process request', 
+        details: error.message 
+      }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       });
     }
   },
 };
-
