@@ -4,6 +4,7 @@
 import re
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup, Comment
+import base64
 
 # This is the definitive
 # feature order for the production model, based on feature importance.
@@ -97,10 +98,108 @@ def get_num_query_components(parsed_url):
         return 0
     return parsed_url.query.count('&') + 1
 
+# ENHANCED: Extract text from multiple sources
+def extract_all_text(soup):
+    """Extract text from various sources including hidden elements and attributes"""
+    texts = []
+    
+    # 1. Standard visible text
+    for script in soup(["script", "style", "head", "meta"]):
+        script.extract()
+    texts.append(soup.get_text(separator=' ', strip=True))
+    
+    # 2. Input placeholders and values
+    for input_tag in soup.find_all('input'):
+        if input_tag.get('placeholder'):
+            texts.append(input_tag['placeholder'])
+        if input_tag.get('value'):
+            texts.append(input_tag['value'])
+    
+    # 3. Image alt texts
+    for img in soup.find_all('img', alt=True):
+        texts.append(img['alt'])
+    
+    # 4. Title attributes
+    for elem in soup.find_all(title=True):
+        texts.append(elem['title'])
+    
+    # 5. Aria labels
+    for elem in soup.find_all(attrs={'aria-label': True}):
+        texts.append(elem['aria-label'])
+    
+    # 6. Button texts
+    for button in soup.find_all(['button', 'input']):
+        if button.get('type') in ['submit', 'button']:
+            if button.string:
+                texts.append(button.string)
+            elif button.get('value'):
+                texts.append(button['value'])
+    
+    # 7. Check for base64 encoded content in scripts
+    for script in soup.find_all('script'):
+        if script.string:
+            # Look for base64 patterns
+            b64_pattern = r'[A-Za-z0-9+/]{50,}={0,2}'
+            matches = re.findall(b64_pattern, script.string)
+            for match in matches[:5]:  # Limit to avoid processing too much
+                try:
+                    decoded = base64.b64decode(match).decode('utf-8', errors='ignore')
+                    if any(word in decoded.lower() for word in ['password', 'login', 'verify']):
+                        texts.append(decoded)
+                except:
+                    pass
+    
+    # 8. Meta tag content
+    for meta in soup.find_all('meta', content=True):
+        texts.append(meta['content'])
+    
+    # Combine all text
+    return ' '.join(texts).lower()
+
+# ENHANCED: Detect suspicious patterns even in minimal content
+def get_suspicious_patterns(soup, domain, full_text):
+    """Detect suspicious patterns that might indicate phishing"""
+    suspicious_count = 0
+    
+    # 1. Check for mismatched branding
+    brand_keywords = ['paypal', 'amazon', 'google', 'microsoft', 'apple', 'bank', 'chase', 'wells fargo']
+    domain_lower = domain.lower()
+    
+    for brand in brand_keywords:
+        if brand in full_text and brand not in domain_lower:
+            suspicious_count += 5  # High weight for brand spoofing
+    
+    # 2. Check for urgency words
+    urgency_words = ['urgent', 'immediate', 'expire', 'suspend', 'deadline', 'limited time', 
+                    'act now', 'verify now', 'confirm now']
+    for word in urgency_words:
+        if word in full_text:
+            suspicious_count += 2
+    
+    # 3. Check for data-harvesting inputs
+    sensitive_inputs = soup.find_all('input', {'type': ['password', 'tel', 'email']})
+    suspicious_count += len(sensitive_inputs) * 2
+    
+    # 4. Check for suspicious form attributes
+    for form in soup.find_all('form'):
+        # Forms posting to different domain
+        action = form.get('action', '')
+        if action and action.startswith('http'):
+            form_domain = urlparse(action).netloc
+            if form_domain and form_domain != domain:
+                suspicious_count += 10
+    
+    # 5. Check for hidden elements that might contain phishing content
+    hidden_elements = soup.find_all(style=re.compile(r'display:\s*none|visibility:\s*hidden'))
+    if len(hidden_elements) > 3:
+        suspicious_count += 3
+    
+    return suspicious_count
+
 # --- Part 2: HTML Content-Based Feature Extractors ---
 
 def get_pct_ext_hyperlinks(soup, domain):
-    """Percentage of <a> tags pointing to a different domain. Range: 0.0 to 1.0"""
+    """Enhanced to detect JavaScript-based redirects"""
     total_links = 0
     external_links = 0
     page_url = f"https://{domain}"
@@ -108,6 +207,12 @@ def get_pct_ext_hyperlinks(soup, domain):
     for a in soup.find_all('a', href=True):
         total_links += 1
         href = a['href'].strip()
+        
+        # Check for JavaScript redirects
+        if 'javascript:' in href.lower() and 'location' in href.lower():
+            external_links += 1
+            continue
+            
         if not href:
             continue
 
@@ -116,8 +221,17 @@ def get_pct_ext_hyperlinks(soup, domain):
         
         if parsed_href.netloc and parsed_href.netloc != domain:
             external_links += 1
+    
+    # Also check for meta refresh redirects
+    meta_refresh = soup.find('meta', attrs={'http-equiv': 'refresh'})
+    if meta_refresh:
+        content = meta_refresh.get('content', '')
+        if 'url=' in content.lower():
+            total_links += 1
+            external_links += 1
             
     return (external_links / total_links) if total_links > 0 else 0.0
+
 
 def get_pct_ext_resource_urls(soup, domain):
     """Percentage of resource URLs (img, script, link) from an external domain. Range: 0.0 to 1.0"""
@@ -190,16 +304,38 @@ def get_frequent_domain_name_mismatch(soup, domain):
         # Original threshold for unknown domains
         return 1 if match_ratio < 0.20 else 0
 
+# Modified form detection to catch more evasion techniques
 def get_insecure_forms(soup, domain):
-    """Checks if any <form> submits to an external domain or over insecure HTTP."""
+    """ENHANCED: Detect forms even with evasion techniques"""
     page_url = f"https://{domain}"
-    for form in soup.find_all('form', action=True):
-        action = form['action']
+    
+    # Check traditional forms
+    for form in soup.find_all('form'):
+        action = form.get('action', '')
+        if not action:  # Empty action is suspicious
+            return 1
+        
         absolute_action = urljoin(page_url, action)
         parsed_action = urlparse(absolute_action)
         
         if parsed_action.scheme == 'http' or (parsed_action.netloc and parsed_action.netloc != domain):
             return 1
+    
+    # Check for input fields without forms (common evasion)
+    password_inputs = soup.find_all('input', {'type': 'password'})
+    if password_inputs and not soup.find('form'):
+        return 1  # Password field without form is suspicious
+    
+    # Check for AJAX-style data collection
+    scripts = soup.find_all('script')
+    for script in scripts:
+        if script.string:
+            # Look for AJAX calls to external domains
+            if 'XMLHttpRequest' in script.string or 'fetch(' in script.string:
+                if any(domain not in script.string and 'http' in script.string 
+                      for domain in [domain, 'googleapis.com', 'jquery.com']):
+                    return 1
+    
     return 0
 
 def get_submit_info_to_email(soup):
@@ -209,38 +345,46 @@ def get_submit_info_to_email(soup):
             return 1
     return 0
 
+# Modified sensitive words function
 def get_num_sensitive_words(soup, domain):
     """
-    BALANCED: Returns raw count for non-trusted domains, adjusted for trusted domains.
-    This maintains compatibility with the trained model.
+    ENHANCED: Better detection of sensitive content including hidden text
     """
-    # Remove script, style, and metadata
-    for script_or_style in soup(["script", "style", "head", "title", "meta", "[document]"]):
-        script_or_style.extract()
-    
-    text = soup.get_text(separator=' ', strip=True).lower()
+    # Extract all possible text
+    full_text = extract_all_text(soup)
     
     if is_trusted_domain(domain):
-        # For trusted domains, look for more specific phishing indicators
+        # For trusted domains, look for specific phishing indicators
         phishing_phrases = [
             "suspended", "locked", "verify immediately", "urgent action", 
             "click here immediately", "confirm identity", "unusual activity", 
             "temporary suspension", "verify your account", "update payment",
             "security alert", "account verification required"
         ]
-        count = sum(1 for phrase in phishing_phrases if phrase in text)
-        # Scale up to match expected range
+        count = sum(1 for phrase in phishing_phrases if phrase in full_text)
         return count * 5
     else:
-        # For non-trusted domains, use original sensitive words and count
+        # For non-trusted domains, enhanced detection
         sensitive_words = [
             "login", "password", "verify", "account", "update", 
-            "secure", "signin", "banking", "confirm", "credential",
-            "username", "email", "phone", "ssn", "social security"
+            "secure", "signin", "sign in", "log in", "banking", 
+            "confirm", "credential", "username", "email", "phone", 
+            "ssn", "social security", "credit card", "cvv", "pin",
+            "authenticate", "validation", "expires", "suspended"
         ]
+        
         count = 0
         for word in sensitive_words:
-            count += text.count(word)
+            count += full_text.count(word)
+        
+        # Add suspicious pattern count
+        suspicious_patterns = get_suspicious_patterns(soup, domain, full_text)
+        count += suspicious_patterns
+        
+        # If very little text but has form/inputs, that's suspicious
+        if len(full_text) < 200 and (soup.find('form') or len(soup.find_all('input')) > 2):
+            count += 10
+        
         return count
 
 def get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href, domain):
@@ -324,6 +468,11 @@ def extract_features(url, html_content):
     BALANCED: Extracts features with appropriate handling for trusted vs untrusted domains.
     """
     features = {}
+
+    # Add minimal content detection
+    if len(html_content.strip()) < 100:
+        # Minimal content is suspicious for most sites
+        print(f"WARNING: Minimal HTML content ({len(html_content)} chars) for {url}")
     
     try:
         parsed_url = urlparse(url)
