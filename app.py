@@ -72,7 +72,17 @@ with st.expander("ℹ️ About Trusted Domains"):
     This doesn't mean these sites can't be spoofed - always verify the URL carefully!
     """)
 
-user_url = st.text_input("URL to Analyze:", placeholder="https://example.com")
+# Create two columns for input options
+col1, col2 = st.columns([3, 1])
+
+with col1:
+    user_url = st.text_input("URL to Analyze:", placeholder="https://example.com")
+
+with col2:
+    st.write(" ")  # Spacing
+    st.write(" ")  # Spacing
+    force_detailed = st.checkbox("Force detailed analysis", 
+                                help="Check this to run full analysis even on trusted domains")
 
 if st.button("Analyze URL"):
     if not user_url:
@@ -81,44 +91,13 @@ if st.button("Analyze URL"):
         # Normalize the URL
         normalized_url = normalize_url(user_url)
         
-        # --- IMPROVEMENT: Fast path for allowlisted domains ---
-        if check_allowlist(normalized_url):
+        # Check if it's a trusted domain and detailed analysis is not forced
+        if check_allowlist(normalized_url) and not force_detailed:
             st.success(f"**Verdict: Legitimate** (Trusted Domain)")
             st.info(f"✅ This domain is recognized as a major legitimate website. While AegisLens trusts this domain, always verify you're on the correct URL and not a lookalike domain.")
-            
-            # Still offer detailed analysis
-            if st.checkbox("Show detailed analysis anyway"):
-                with st.spinner(f"Performing detailed analysis of {normalized_url}..."):
-                    try:
-                        # Fetch and analyze as normal
-                        payload = {'url': normalized_url}
-                        response = requests.post(CLOUDFLARE_WORKER_URL, json=payload, timeout=20)
-                        response.raise_for_status()
-                        
-                        result = response.json()
-                        html_content = result.get('html')
-                        
-                        if html_content:
-                            feature_vector = extract_features(normalized_url, html_content)
-                            features_df = pd.DataFrame([feature_vector], columns=FEATURE_ORDER)
-                            
-                            prediction_proba = model.predict_proba(features_df)[0]
-                            prediction = model.predict(features_df)[0]
-                            
-                            shap_values = explainer(features_df)
-                            
-                            st.subheader("Detailed Analysis (for educational purposes)")
-                            st.write("Note: This is a trusted domain, but here's what our model sees:")
-                            
-                            st_shap(shap.plots.force(shap_values[0, :, 1]))
-                            
-                            with st.expander("Show Features"):
-                                st.write("Raw feature values:")
-                                st.dataframe(features_df.T.rename(columns={0: 'Value'}))
-                    except Exception as e:
-                        st.error(f"Could not perform detailed analysis: {e}")
+            st.write("💡 **Tip:** To see the detailed AI analysis for this trusted domain, check the 'Force detailed analysis' box above and click Analyze again.")
         else:
-            # Normal analysis for non-allowlisted domains
+            # Perform full analysis
             with st.spinner(f"Securely fetching and analyzing {normalized_url}..."):
                 try:
                     # Step 1: Call the secure Cloudflare Worker
@@ -146,12 +125,22 @@ if st.button("Analyze URL"):
                     # --- Display Results ---
                     st.subheader("Analysis Results")
                     
+                    # If it's a trusted domain being analyzed in detail, show that context
+                    if check_allowlist(normalized_url) and force_detailed:
+                        st.info("📝 **Note:** This is a trusted domain. The analysis below shows what the AI model sees, which may include false positive indicators due to legitimate security features.")
+                    
                     if prediction == 1:
-                        st.error(f"**Verdict: Phishing** (Confidence: {prediction_proba[1]:.2%})")
-                        st.warning("⚠️ This website shows characteristics commonly associated with phishing sites. Exercise extreme caution!")
+                        if check_allowlist(normalized_url):
+                            st.warning(f"**Model Output: Phishing** (Confidence: {prediction_proba[1]:.2%})")
+                            st.success("**Override: Legitimate** (This is a trusted domain)")
+                            st.write("This demonstrates why we maintain a trusted domain list - legitimate sites often have features that can trigger false positives.")
+                        else:
+                            st.error(f"**Verdict: Phishing** (Confidence: {prediction_proba[1]:.2%})")
+                            st.warning("⚠️ This website shows characteristics commonly associated with phishing sites. Exercise extreme caution!")
                     else:
                         st.success(f"**Verdict: Legitimate** (Confidence: {prediction_proba[0]:.2%})")
-                        st.info("✅ This website appears to be legitimate based on our analysis. However, always verify the URL matches your expectations.")
+                        if not check_allowlist(normalized_url):
+                            st.info("✅ This website appears to be legitimate based on our analysis. However, always verify the URL matches your expectations.")
 
                     st.subheader("Explanation of Verdict")
                     st.write("This force plot shows which features pushed the prediction towards 'Phishing' (red) or 'Legitimate' (blue).")
