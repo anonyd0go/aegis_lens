@@ -110,6 +110,7 @@ sniffio==1.3.1
 soupsieve==2.7
 stack-data==0.6.3
 streamlit==1.46.1
+streamlit-shap==1.0.2
 tenacity==9.1.2
 terminado==0.18.1
 text-unidecode==1.3
