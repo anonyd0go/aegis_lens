@@ -259,64 +259,6 @@ def get_num_query_components(parsed_url):
         return 0
     return parsed_url.query.count('&') + 1
 
-# ENHANCED: Extract text from multiple sources
-def extract_all_text(soup):
-    """Extract text from various sources including hidden elements and attributes"""
-    texts = []
-    
-    # 1. Standard visible text
-    for script in soup(["script", "style", "head", "meta"]):
-        script.extract()
-    texts.append(soup.get_text(separator=' ', strip=True))
-    
-    # 2. Input placeholders and values
-    for input_tag in soup.find_all('input'):
-        if input_tag.get('placeholder'):
-            texts.append(input_tag['placeholder'])
-        if input_tag.get('value'):
-            texts.append(input_tag['value'])
-    
-    # 3. Image alt texts
-    for img in soup.find_all('img', alt=True):
-        texts.append(img['alt'])
-    
-    # 4. Title attributes
-    for elem in soup.find_all(title=True):
-        texts.append(elem['title'])
-    
-    # 5. Aria labels
-    for elem in soup.find_all(attrs={'aria-label': True}):
-        texts.append(elem['aria-label'])
-    
-    # 6. Button texts
-    for button in soup.find_all(['button', 'input']):
-        if button.get('type') in ['submit', 'button']:
-            if button.string:
-                texts.append(button.string)
-            elif button.get('value'):
-                texts.append(button['value'])
-    
-    # 7. Check for base64 encoded content in scripts
-    for script in soup.find_all('script'):
-        if script.string:
-            # Look for base64 patterns
-            b64_pattern = r'[A-Za-z0-9+/]{50,}={0,2}'
-            matches = re.findall(b64_pattern, script.string)
-            for match in matches[:5]:  # Limit to avoid processing too much
-                try:
-                    decoded = base64.b64decode(match).decode('utf-8', errors='ignore')
-                    if any(word in decoded.lower() for word in ['password', 'login', 'verify']):
-                        texts.append(decoded)
-                except:
-                    pass
-    
-    # 8. Meta tag content
-    for meta in soup.find_all('meta', content=True):
-        texts.append(meta['content'])
-    
-    # Combine all text
-    return ' '.join(texts).lower()
-
 # ENHANCED: Detect suspicious patterns even in minimal content
 def get_suspicious_patterns(soup, domain, full_text):
     """Detect suspicious patterns that might indicate phishing"""
