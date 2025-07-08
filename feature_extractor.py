@@ -4,7 +4,6 @@
 import re
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup, Comment
-import base64
 
 # This is the definitive feature order for the production model, based on feature importance.
 FEATURE_ORDER = [
@@ -76,7 +75,7 @@ TARGETED_BRANDS = {
     'adobe', 'office365', 'outlook', 'allegro', 'alibaba', 'aliexpress'
 }
 
-# Suspicious TLDs commonly used in phishing
+# AGGRESSIVE: Expanded list of suspicious TLDs
 SUSPICIOUS_TLDS = {
     '.tk', '.ml', '.ga', '.cf', '.click', '.download', '.review',
     '.work', '.date', '.men', '.loan', '.racing', '.win', '.bid',
@@ -84,7 +83,8 @@ SUSPICIOUS_TLDS = {
     '.stream', '.gdn', '.mom', '.xin', '.gq', '.cc', '.pw', '.top',
     '.club', '.buzz', '.biz', '.rocks', '.space', '.site', '.online',
     '.website', '.press', '.fun', '.host', '.store', '.cfd', '.sbs',
-    '.rest', '.quest', '.cyou', '.icu', '.uno', '.shop', '.fit'
+    '.rest', '.quest', '.cyou', '.icu', '.uno', '.shop', '.fit',
+    '.lat', '.vip', '.live', '.life', '.today', '.world', '.tech'
 }
 
 def is_trusted_domain(domain):
@@ -105,38 +105,42 @@ def get_url_suspicion_score(url, domain):
         if brand in domain_lower and not is_trusted_domain(domain):
             # Brand name in untrusted domain
             if f'{brand}.com' not in domain_lower and f'www.{brand}.com' not in domain_lower:
-                score += 30  # High weight for brand spoofing
+                score += 50  # AGGRESSIVE: Increased from 30
     
     # Check for suspicious TLD
     for tld in SUSPICIOUS_TLDS:
         if domain_lower.endswith(tld):
-            score += 15
+            score += 30  # AGGRESSIVE: Increased from 15
             break
     
-    # Enhanced: Check for random-looking domains (like 0ajh77.lat)
+    # Enhanced: Check for random-looking domains
     domain_parts = domain_lower.split('.')
     if len(domain_parts) >= 2:
         main_domain = domain_parts[0]
         # Check if domain looks random (mix of letters and numbers, short length)
         if len(main_domain) <= 8 and re.search(r'[0-9]', main_domain) and re.search(r'[a-z]', main_domain):
             # Contains both letters and numbers in short domain
-            score += 20
+            score += 40  # AGGRESSIVE: Increased from 20
         # Check for excessive numbers in domain
         if sum(c.isdigit() for c in main_domain) >= len(main_domain) * 0.4:
-            score += 15
+            score += 30  # AGGRESSIVE: Increased from 15
+        # Very short domains
+        if len(main_domain) <= 6 and not is_trusted_domain(domain):
+            score += 25  # AGGRESSIVE: New penalty
     
     # Enhanced: Check for suspicious path patterns (like /5qjfdrqj/oViueb/7)
     path = urlparse(url).path
-    if path:
+    if path and path != '/':
         path_parts = [p for p in path.split('/') if p]
         for part in path_parts:
             # Random-looking path segments
-            if len(part) >= 5 and len(part) <= 12:
-                # Check entropy (randomness)
-                if (re.search(r'[0-9]', part) and re.search(r'[a-z]', part.lower())) or \
-                   (len(set(part)) > len(part) * 0.7):  # High character diversity
-                    score += 10
-    
+            if 5 <= len(part) <= 12 and re.search(r'[0-9]', part) and re.search(r'[a-z]', part.lower()):
+                score += 15  # AGGRESSIVE: Increased from 10
+
+    # AGGRESSIVE: No subdomain penalty (most legitimate sites use www or nothing)
+    if len(domain_parts) > 2 and not any(part in ['www', 'mail', 'accounts'] for part in domain_parts[:-2]):
+        score += 20
+
     # Check for suspicious patterns
     suspicious_patterns = [
         r'[0-9]{5,}',  # Long numbers (like pl-oferta95642)
@@ -166,7 +170,13 @@ def get_url_suspicion_score(url, domain):
     
     # IP address in URL
     if re.search(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', domain):
-        score += 25
+        score += 40  # AGGRESSIVE: Increased from 25
+    
+    # AGGRESSIVE: Generic/meaningless domain names
+    generic_suspicious = ['secure', 'update', 'verify', 'confirm', 'account', 'service', 'support']
+    for word in generic_suspicious:
+        if word in domain_lower and not is_trusted_domain(domain):
+            score += 15
     
     # URL shortener patterns
     if len(domain) < 10 and '.' in domain and not is_trusted_domain(domain):
@@ -224,7 +234,11 @@ def is_suspiciously_empty(html_content, domain):
     soup = BeautifulSoup(html_content, 'html.parser')
     text_content = soup.get_text(strip=True)
 
-    if len(text_content) < 10:  # Less than 10 chars of actual text
+    if len(text_content) < 20:  # AGGRESSIVE: Increased threshold
+        return True
+    
+    # Check for minimal content pages
+    if len(text_content) < 100 and not soup.find('form'):
         return True
 
     # Check for "loading" pages that might be waiting for JS
@@ -369,16 +383,20 @@ def get_pct_null_self_redirect_hyperlinks(soup):
             
     return (null_links / total_links) if total_links > 0 else 0.0
 
-# Modified domain mismatch to handle empty pages
 def get_frequent_domain_name_mismatch(soup, domain, url, html_content):
     """
-    Enhanced to detect brand spoofing even in empty pages
+    AGGRESSIVE: Flag suspicious domains even with no content
     """
-    # If page is empty but URL is suspicious, flag it
-    if is_suspiciously_empty(html_content, domain):
+    # If page is empty/blocked but URL is suspicious, flag it
+    if (is_suspiciously_empty(html_content, domain) or is_protection_page(html_content)):
         url_suspicion = get_url_suspicion_score(url, domain)
-        if url_suspicion > 20:
-            return 1  # Flag as mismatch
+        if url_suspicion > 30:  # AGGRESSIVE: Lower threshold
+            return 1
+    
+    # For URLs trying to spoof brands
+    for brand in TARGETED_BRANDS:
+        if brand in domain.lower() and not is_trusted_domain(domain):
+            return 1
     
     # Original logic for non-empty pages
     total_links_with_text = 0
@@ -402,10 +420,6 @@ def get_frequent_domain_name_mismatch(soup, domain, url, html_content):
             domain_in_anchor_count += 1
 
     if total_links_with_text == 0:
-        # No links, but check if URL is trying to spoof a brand
-        for brand in TARGETED_BRANDS:
-            if brand in domain.lower() and not is_trusted_domain(domain):
-                return 1
         return 0
         
     match_ratio = (domain_in_anchor_count / total_links_with_text)
@@ -415,7 +429,6 @@ def get_frequent_domain_name_mismatch(soup, domain, url, html_content):
     else:
         return 1 if match_ratio < 0.20 else 0
 
-# Modified form detection to catch more evasion techniques
 def get_insecure_forms(soup, domain):
     """ENHANCED: Detect forms even with evasion techniques"""
     page_url = f"https://{domain}"
@@ -456,21 +469,19 @@ def get_submit_info_to_email(soup):
             return 1
     return 0
 
-# Enhanced sensitive words function
 def get_num_sensitive_words(soup, domain, url, html_content):
     """
-    Enhanced detection including URL patterns and empty page handling
+    AGGRESSIVE: Much higher penalties for suspicious URLs with blocked content
     """
     # First, get URL suspicion score
     url_suspicion = get_url_suspicion_score(url, domain)
     
-    # Check if page is suspiciously empty or blocked
-    if is_suspiciously_empty(html_content, domain) or is_protection_page(html_content):
-        # Empty/blocked page on suspicious domain = likely phishing
-        # Base score of 30 for blocked suspicious pages, plus URL suspicion
-        return 30 + url_suspicion
+    # AGGRESSIVE: If page is blocked/empty AND URL is suspicious, heavy penalty
+    if (is_suspiciously_empty(html_content, domain) or is_protection_page(html_content)) and url_suspicion > 0:
+        # Base penalty of 50 for any blocked suspicious page, plus URL suspicion
+        return 50 + url_suspicion
     
-    # Extract all text (existing logic)
+    # Extract text
     for script_or_style in soup(["script", "style", "head", "title", "meta", "[document]"]):
         script_or_style.extract()
     
@@ -500,53 +511,43 @@ def get_num_sensitive_words(soup, domain, url, html_content):
         for word in sensitive_words:
             count += text.count(word)
         
-        # Add URL suspicion score
+        # AGGRESSIVE: Always add URL suspicion for untrusted domains
         count += url_suspicion
         
-        # If very little text but suspicious URL, increase score
-        if len(text) < 50 and url_suspicion > 20:
-            count += 15
-        
-        # Check form placeholders and values even if no visible text
-        for input_tag in soup.find_all('input'):
-            placeholder = (input_tag.get('placeholder', '') + ' ' + 
-                          input_tag.get('value', '')).lower()
-            for word in sensitive_words:
-                if word in placeholder:
-                    count += 2
+        # AGGRESSIVE: Minimal content penalty
+        if len(text) < 200 and url_suspicion > 20:
+            count += 30
         
         return count
 
+# AGGRESSIVE: Add penalties to risk-tiered features for suspicious domains
 def get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href, domain):
-    """
-    Risk-tiered version - only relaxed for trusted domains.
-    """
+    """Risk-tiered version - penalize empty suspicious domains"""
     if is_trusted_domain(domain):
-        # Trusted domains often have more JS-based navigation
         if pct_null_href > 0.5:
-            return 1  # High Risk
+            return 1
         elif 0.3 <= pct_null_href <= 0.5:
-            return 0  # Medium Risk
+            return 0
         else:
-            return -1 # Low Risk
+            return -1
     else:
-        # Original thresholds for unknown domains - these should catch phishing
+        # AGGRESSIVE: If no links at all on suspicious domain, that's suspicious
+        if pct_null_href == 0 and get_url_suspicion_score("", domain) > 30:
+            return 1
+        # Original thresholds
         if pct_null_href > 0.31:
-            return 1  # High Risk
+            return 1
         elif 0.15 <= pct_null_href <= 0.31:
-            return 0  # Medium Risk
+            return 0
         else:
-            return -1 # Low Risk
+            return -1
 
 def get_ext_meta_script_link_rt(soup, domain):
-    """
-    Risk-tiered feature - only considers CDNs for trusted domains.
-    """
+    """Risk-tiered external resources - penalize suspicious domains with no resources"""
     total_resources = 0
     external_resources = 0
     page_url = f"https://{domain}"
     
-    # Common legitimate CDNs
     legitimate_cdns = {
         'googleapis.com', 'gstatic.com', 'cloudflare.com', 'jsdelivr.net',
         'unpkg.com', 'cdnjs.cloudflare.com', 'maxcdn.bootstrapcdn.com',
@@ -565,31 +566,31 @@ def get_ext_meta_script_link_rt(soup, domain):
         parsed_resource_url = urlparse(absolute_url)
         
         if parsed_resource_url.netloc and parsed_resource_url.netloc != domain:
-            # Only give CDN exemption to trusted domains
             if is_trusted_domain(domain):
                 is_cdn = any(cdn in parsed_resource_url.netloc for cdn in legitimate_cdns)
                 if not is_cdn:
                     external_resources += 1
             else:
-                # For non-trusted domains, count all external resources
                 external_resources += 1
 
+    # AGGRESSIVE: No resources on suspicious domain is suspicious
+    if total_resources == 0 and not is_trusted_domain(domain) and get_url_suspicion_score("", domain) > 30:
+        return 1
+    
     ratio = (external_resources / total_resources) if total_resources > 0 else 0.0
     
     if is_trusted_domain(domain):
-        # Very relaxed for trusted domains
         if ratio >= 0.9:
-            return 1  # High Risk
+            return 1
         else:
-            return -1 # Low Risk
+            return -1
     else:
-        # Original strict thresholds for unknown domains
-        if ratio >= 0.61:  # Lower threshold to catch more phishing
-            return 1  # High Risk
+        if ratio >= 0.61:
+            return 1
         elif 0.31 <= ratio < 0.61:
-            return 0  # Medium Risk
+            return 0
         else:
-            return -1 # Low Risk
+            return -1
 
 # --- Main Orchestrator Function ---
 
