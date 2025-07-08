@@ -125,6 +125,7 @@ with st.expander("ℹ️ Understanding Our Analysis"):
     - Protection services (Cloudflare, etc.) block content analysis
     - Some phishing sites serve different content to automated tools
     - Low confidence scores (40-60%) indicate uncertainty
+    - Certain legitimate sites may be categorized as Phishing
     
     **Trust Indicators:**
     - 🟢 Low Risk: High confidence legitimate
@@ -296,7 +297,7 @@ if st.button("Analyze URL", type="primary"):
                                     st.metric(name, f"{value:.0f}")
                         
                         # All features table
-                        if st.checkbox("Show all features"):
+                        with st.expander("Show all features"):
                             feature_descriptions = {
                                 'NumDash': 'Hyphens in URL',
                                 'NumDots': 'Dots in URL',
