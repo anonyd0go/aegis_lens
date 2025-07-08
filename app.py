@@ -9,7 +9,7 @@ import pandas as pd
 import os
 import shap
 from urllib.parse import urlparse
-from feature_extractor import extract_features, FEATURE_ORDER, TRUSTED_DOMAINS
+from feature_extractor import extract_features, FEATURE_ORDER, TRUSTED_DOMAINS, get_url_suspicion_score
 from model_loader import load_model, load_explainer
 
 # --- Page Configuration and Styling ---
@@ -59,26 +59,79 @@ def check_allowlist(url):
     except:
         return False
 
+def is_protection_or_error_page(html_content):
+    """Detect protection services and error pages"""
+    content_lower = html_content.lower()
+    
+    # Protection services
+    protection_indicators = [
+        ('cloudflare', ['attention required! | cloudflare', 'cloudflare ray id', 'cf-ray']),
+        ('security', ['you have been blocked', 'security check', 'ddos protection']),
+        ('access', ['403 forbidden', 'access denied', 'access to this resource']),
+        ('error', ['404 not found', 'page not found', 'dns_probe'])
+    ]
+    
+    for category, indicators in protection_indicators:
+        if any(ind in content_lower for ind in indicators):
+            return True, category
+    
+    return False, None
+
+def get_risk_level(prediction_proba, url_suspicion_score, is_blocked):
+    """Determine risk level based on multiple factors"""
+    phishing_prob = prediction_proba[1]
+    
+    # If blocked/protected with suspicious URL
+    if is_blocked and url_suspicion_score > 30:
+        return "HIGH", "🔴"
+    
+    # High confidence phishing
+    if phishing_prob > 0.7:
+        return "HIGH", "🔴"
+    
+    # Medium risk scenarios
+    if phishing_prob > 0.5 or (phishing_prob > 0.4 and url_suspicion_score > 40):
+        return "MEDIUM", "🟡"
+    
+    # Low confidence legitimate (suspicious)
+    if phishing_prob > 0.3 and phishing_prob < 0.5:
+        return "UNCERTAIN", "⚪"
+    
+    # High confidence legitimate
+    return "LOW", "🟢"
+
 # --- UI Elements ---
 st.title("🛡️ AegisLens Phishing Detector")
 st.write("Enter a URL to analyze its content and structure for phishing threats. Our AI will provide a verdict and explain its reasoning.")
 
-# Add an info box about trusted domains
-with st.expander("About Trusted Domains"):
-    st.info("""
-    AegisLens recognizes major legitimate websites and applies adjusted analysis rules to reduce false positives. 
-    Trusted domains include major search engines, social media platforms, banks, and tech companies.
-    
-    This doesn't mean these sites can't be spoofed - always verify the URL carefully!
-    """)
-
 st.info("**Important**: This tool is still in deveopment. Data used to train the model cuts off at 2017.  Modern phishing sites are complex and more sophisticated evasio techniques.  Some legitimate sites can be categorized as Phishing")
-st.info("""
-    Categorization of a false positive = categorized as Phishing when it is not.
-    False negative = categorized as Legitimate when it is not.
-    Make sure to doublecheck the link.
-    Do not click it if you do not trust it.
+# Warning box
+st.warning("""
+⚠️ **Important Limitations**: Modern phishing sites often use protection services  
+or serve empty pages to evade detection. When this happens, our analysis relies primarily on URL patterns, 
+which may not be sufficient for accurate detection. Always verify URLs carefully, especially for sensitive accounts.
 """)
+
+# Info expander
+with st.expander("ℹ️ Understanding Our Analysis"):
+    st.info("""
+    **How AegisLens Works:**
+    - Analyzes 14 different features from the URL and webpage content
+    - Uses machine learning to identify phishing patterns
+    - Provides explainable AI visualizations
+    
+    **Known Limitations:**
+    - Cannot analyze JavaScript-rendered content
+    - Protection services (Cloudflare, etc.) block content analysis
+    - Some phishing sites serve different content to automated tools
+    - Low confidence scores (40-60%) indicate uncertainty
+    
+    **Trust Indicators:**
+    - 🟢 Low Risk: High confidence legitimate
+    - ⚪ Uncertain: Low confidence, manual verification recommended  
+    - 🟡 Medium Risk: Suspicious patterns detected
+    - 🔴 High Risk: Strong phishing indicators
+    """)
 
 # Create two columns for input options
 col1, col2 = st.columns([3, 1])
@@ -89,10 +142,10 @@ with col1:
 with col2:
     st.write(" ")  # Spacing
     st.write(" ")  # Spacing
-    force_detailed = st.checkbox("Force detailed analysis", 
-                                help="Check this to run full analysis even on trusted domains")
+    force_detailed = st.checkbox("Force analysis", 
+                                help="Analyze even trusted domains in detail")
 
-if st.button("Analyze URL"):
+if st.button("Analyze URL", type="primary"):
     if not user_url:
         st.warning("Please enter a URL.")
     else:
@@ -101,16 +154,16 @@ if st.button("Analyze URL"):
         
         # Check if it's a trusted domain and detailed analysis is not forced
         if check_allowlist(normalized_url) and not force_detailed:
-            st.success(f"**Verdict: Legitimate** (Trusted Domain)")
-            st.info(f"✅ This domain is recognized as a major legitimate website. While AegisLens trusts this domain, always verify you're on the correct URL and not a lookalike domain.")
+            st.success(f"**Verdict: Trusted Domain**")
+            st.info(f"This is a recognized legitimate website. However, always verify the exact URL matches what you expect.")
             st.write("**Tip:** To see the detailed AI analysis for this trusted domain, check the 'Force detailed analysis' box above and click Analyze again.")
         else:
             # Perform full analysis
-            with st.spinner(f"Securely fetching and analyzing {normalized_url}..."):
+            with st.spinner(f"Analyzing {normalized_url}..."):
                 try:
                     # Step 1: Call the secure Cloudflare Worker
                     payload = {'url': normalized_url}
-                    response = requests.post(CLOUDFLARE_WORKER_URL, json=payload, timeout=20)
+                    response = requests.post(CLOUDFLARE_WORKER_URL, json=payload, timeout=30)
                     response.raise_for_status()
 
                     result = response.json()
@@ -126,6 +179,13 @@ if st.button("Analyze URL"):
                         st.write("• Anti-analysis techniques by phishing sites")
                         st.write("• JavaScript-rendered content")  
                         st.write("• The site detecting automated access")
+                    
+                    # Check for protection/error pages
+                    is_blocked, block_type = is_protection_or_error_page(html_content)
+                    
+                    # Get URL suspicion score
+                    domain = urlparse(normalized_url).netloc
+                    url_suspicion = get_url_suspicion_score(normalized_url, domain)
                         
                     # Step 3: Extract features
                     feature_vector = extract_features(normalized_url, html_content)
@@ -136,68 +196,135 @@ if st.button("Analyze URL"):
                     prediction = model.predict(features_df)[0]
                     
                     shap_values = explainer(features_df)
+
+                    # Get Risk level
+                    risk_level, risk_icon = get_risk_level(prediction_proba, url_suspicion, is_blocked)
                     
-                    # --- Display Results ---
+                    # Display results
                     st.subheader("Analysis Results")
                     
-                    # If it's a trusted domain being analyzed in detail, show that context
-                    if check_allowlist(normalized_url) and force_detailed:
-                        st.info("📝 **Note:** This is a trusted domain. The analysis below shows what the AI model sees, which may include false positive indicators due to legitimate security features.")
-
-                    if prediction == 1:
-                        if check_allowlist(normalized_url):
-                            st.warning(f"**Model Output: Phishing** (Confidence: {prediction_proba[1]:.2%})")
-                            st.success("**Override: Legitimate** (This is a trusted domain)")
-                            st.write("This demonstrates why we maintain a trusted domain list - legitimate sites often have features that can trigger false positives.")
-                        else:
-                            st.error(f"**Verdict: Phishing** (Confidence: {prediction_proba[1]:.2%})")
-                            st.warning("⚠️ This website shows characteristics commonly associated with phishing sites. Exercise extreme caution!")
-                    else:
-                        st.success(f"**Verdict: Legitimate** (Confidence: {prediction_proba[0]:.2%})")
-                        if not check_allowlist(normalized_url):
-                            st.info("✅ This website appears to be legitimate based on our analysis. However, always verify the URL matches your expectations.")
-
-                    st.subheader("Explanation of Verdict")
-                    st.write("This force plot shows which features pushed the prediction towards 'Phishing' (red) or 'Legitimate' (blue).")
+                    # Show protection warning if applicable
+                    if is_blocked:
+                        st.warning(f"""
+                        ⚠️ **Content Blocked**: This site is behind {block_type} protection.
+                        Analysis is based primarily on URL patterns, which may be less reliable.
+                        """)
                     
-                    st_shap(shap.plots.force(shap_values[0, :, 1]))
-
-                    # Feature details
-                    with st.expander("Show Features"):
-                        st.write("The following are the raw feature values fed to the model:")
+                    # Risk assessment box
+                    risk_color = {
+                        "HIGH": "danger",
+                        "MEDIUM": "warning", 
+                        "UNCERTAIN": "secondary",
+                        "LOW": "success"
+                    }[risk_level]
+                    
+                    # Main verdict
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        if risk_level == "HIGH":
+                            st.error(f"{risk_icon} **HIGH RISK - Likely Phishing**")
+                            st.write(f"Confidence: {prediction_proba[1]:.0%} phishing")
+                        elif risk_level == "MEDIUM":
+                            st.warning(f"{risk_icon} **MEDIUM RISK - Suspicious**")
+                            st.write(f"Confidence: {prediction_proba[1]:.0%} phishing")
+                        elif risk_level == "UNCERTAIN":
+                            st.info(f"{risk_icon} **UNCERTAIN - Manual Verification Needed**")
+                            st.write(f"Model confidence is low ({prediction_proba[0]:.0%} legitimate, {prediction_proba[1]:.0%} phishing)")
+                        else:
+                            st.success(f"{risk_icon} **LOW RISK - Likely Legitimate**")
+                            st.write(f"Confidence: {prediction_proba[0]:.0%} legitimate")
+                    
+                    with col2:
+                        st.metric("URL Suspicion", f"{url_suspicion}", 
+                                 help="Based on domain patterns, TLD, and structure")
+                    
+                    # Recommendations
+                    if risk_level in ["HIGH", "MEDIUM", "UNCERTAIN"]:
+                        st.error("⚠️ **Recommendations:**")
+                        recommendations = []
                         
-                        # Add feature descriptions
-                        feature_descriptions = {
-                            'NumDash': 'Number of hyphens in URL',
-                            'NumDots': 'Number of dots in URL',
-                            'NumNumericChars': 'Number of numeric characters',
-                            'PathLevel': 'Depth of URL path',
-                            'NumQueryComponents': 'Number of query parameters',
-                            'PctExtHyperlinks': '% of external links',
-                            'PctExtResourceUrls': '% of external resources',
-                            'PctNullSelfRedirectHyperlinks': '% of null/self links',
-                            'FrequentDomainNameMismatch': 'Domain mismatch in anchors',
-                            'InsecureForms': 'Forms submit externally/insecurely',
-                            'SubmitInfoToEmail': 'Forms use mailto',
-                            'NumSensitiveWords': 'Sensitive word density',
-                            'PctExtNullSelfRedirectHyperlinksRT': 'Risk tier: null links',
-                            'ExtMetaScriptLinkRT': 'Risk tier: external scripts'
+                        if risk_level == "HIGH":
+                            recommendations.extend([
+                                "Do NOT enter any personal information",
+                                "Do NOT login or provide passwords",
+                                "Report this URL to PhishTank if confirmed phishing"
+                            ])
+                        elif risk_level == "MEDIUM":
+                            recommendations.extend([
+                                "Verify the domain carefully",
+                                "Check for HTTPS and valid certificates",
+                                "Look for spelling errors or unusual domains"
+                            ])
+                        else:  # UNCERTAIN
+                            recommendations.extend([
+                                "The analysis is inconclusive",
+                                "Manually verify the website's legitimacy",
+                                "Check if this is the official domain you expect"
+                            ])
+                        
+                        for rec in recommendations:
+                            st.write(f"• {rec}")
+                    
+                    # Technical details
+                    with st.expander("🔍 Technical Analysis"):
+                        # SHAP visualization
+                        st.subheader("AI Explanation")
+                        st.write("Features pushing toward Phishing (red) vs Legitimate (blue):")
+                        shap_values = explainer(features_df)
+                        st_shap(shap.plots.force(shap_values[0, :, 1]))
+                        
+                        # Feature breakdown
+                        st.subheader("Feature Analysis")
+                        
+                        # Highlight key features
+                        key_features = {
+                            'NumSensitiveWords': features_df['NumSensitiveWords'].iloc[0],
+                            'URL Suspicion Score': url_suspicion,
+                            'Domain Mismatch': features_df['FrequentDomainNameMismatch'].iloc[0],
+                            'External Links %': features_df['PctExtHyperlinks'].iloc[0] * 100
                         }
                         
-                        # Create a more informative dataframe
-                        features_display = pd.DataFrame({
-                            'Feature': FEATURE_ORDER,
-                            'Value': feature_vector,
-                            'Description': [feature_descriptions.get(f, '') for f in FEATURE_ORDER]
-                        })
-                        st.dataframe(features_display)
-
+                        cols = st.columns(len(key_features))
+                        for i, (name, value) in enumerate(key_features.items()):
+                            with cols[i]:
+                                if name == 'Domain Mismatch':
+                                    st.metric(name, "Yes" if value == 1 else "No")
+                                elif name == 'External Links %':
+                                    st.metric(name, f"{value:.0f}%")
+                                else:
+                                    st.metric(name, f"{value:.0f}")
+                        
+                        # All features table
+                        if st.checkbox("Show all features"):
+                            feature_descriptions = {
+                                'NumDash': 'Hyphens in URL',
+                                'NumDots': 'Dots in URL',
+                                'NumNumericChars': 'Numbers in URL',
+                                'PathLevel': 'URL path depth',
+                                'NumQueryComponents': 'Query parameters',
+                                'PctExtHyperlinks': 'External links ratio',
+                                'PctExtResourceUrls': 'External resources ratio',
+                                'PctNullSelfRedirectHyperlinks': 'Null/self links ratio',
+                                'FrequentDomainNameMismatch': 'Domain mismatch flag',
+                                'InsecureForms': 'Insecure forms flag',
+                                'SubmitInfoToEmail': 'Mailto forms flag',
+                                'NumSensitiveWords': 'Sensitive words + URL score',
+                                'PctExtNullSelfRedirectHyperlinksRT': 'Null links risk tier',
+                                'ExtMetaScriptLinkRT': 'External scripts risk tier'
+                            }
+                            
+                            features_display = pd.DataFrame({
+                                'Feature': FEATURE_ORDER,
+                                'Value': feature_vector,
+                                'Description': [feature_descriptions.get(f, '') for f in FEATURE_ORDER]
+                            })
+                            st.dataframe(features_display)
+                
                 except requests.exceptions.Timeout:
-                    st.error("The request timed out. The target website might be slow or unresponsive.")
-                except requests.exceptions.RequestException as e:
-                    st.error(f"Failed to connect to the secure fetching service. Error: {e}")
+                    st.error("Analysis timed out. The website may be slow or unresponsive.")
                 except Exception as e:
-                    st.error(f"An unexpected error occurred during the analysis: {e}")
+                    st.error(f"Analysis failed: {str(e)}")
 
 # Add footer with additional information
 st.markdown("---")
