@@ -1,12 +1,11 @@
 # app.py
 # Main Streamlit application file for AegisLens.
-# IMPROVED VERSION: Includes allowlist fast path for trusted domains
+# STATELESS VERSION: No session state, no data storage
 
 import streamlit as st
 from streamlit_shap import st_shap
 import requests
 import pandas as pd
-from bs4 import BeautifulSoup
 import os
 import shap
 from urllib.parse import urlparse
@@ -74,12 +73,12 @@ with st.expander("About Trusted Domains"):
     """)
 
 st.info("**Important**: This tool is still in deveopment. Data used to train the model cuts off at 2017.  Modern phishing sites are complex and more sophisticated evasio techniques.  Some legitimate sites can be categorized as Phishing")
-st.info(
-    """Categorization of a false positive = categorized as Phishing when it is not.
+st.info("""
+    Categorization of a false positive = categorized as Phishing when it is not.
     False negative = categorized as Legitimate when it is not.
     Make sure to doublecheck the link.
-    Do not click it if you do not trust it."""
-)
+    Do not click it if you do not trust it.
+""")
 
 # Create two columns for input options
 col1, col2 = st.columns([3, 1])
