@@ -6,8 +6,7 @@ from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup, Comment
 import base64
 
-# This is the definitive
-# feature order for the production model, based on feature importance.
+# This is the definitive feature order for the production model, based on feature importance.
 FEATURE_ORDER = [
     'PctExtHyperlinks',
     'PctExtNullSelfRedirectHyperlinksRT',
@@ -114,6 +113,30 @@ def get_url_suspicion_score(url, domain):
             score += 15
             break
     
+    # Enhanced: Check for random-looking domains (like 0ajh77.lat)
+    domain_parts = domain_lower.split('.')
+    if len(domain_parts) >= 2:
+        main_domain = domain_parts[0]
+        # Check if domain looks random (mix of letters and numbers, short length)
+        if len(main_domain) <= 8 and re.search(r'[0-9]', main_domain) and re.search(r'[a-z]', main_domain):
+            # Contains both letters and numbers in short domain
+            score += 20
+        # Check for excessive numbers in domain
+        if sum(c.isdigit() for c in main_domain) >= len(main_domain) * 0.4:
+            score += 15
+    
+    # Enhanced: Check for suspicious path patterns (like /5qjfdrqj/oViueb/7)
+    path = urlparse(url).path
+    if path:
+        path_parts = [p for p in path.split('/') if p]
+        for part in path_parts:
+            # Random-looking path segments
+            if len(part) >= 5 and len(part) <= 12:
+                # Check entropy (randomness)
+                if (re.search(r'[0-9]', part) and re.search(r'[a-z]', part.lower())) or \
+                   (len(set(part)) > len(part) * 0.7):  # High character diversity
+                    score += 10
+    
     # Check for suspicious patterns
     suspicious_patterns = [
         r'[0-9]{5,}',  # Long numbers (like pl-oferta95642)
@@ -151,10 +174,47 @@ def get_url_suspicion_score(url, domain):
     
     return score
 
+def is_protection_page(html_content):
+    """Check if this is a protection/blocking page instead of actual content"""
+    content_lower = html_content.lower()
+    
+    protection_indicators = [
+        # Cloudflare
+        'attention required! | cloudflare',
+        'please enable cookies',
+        'you have been blocked',
+        'ray id:',
+        'cloudflare ray id',
+        'cf-ray',
+        # Other protection services
+        'access denied',
+        'security check',
+        'checking your browser',
+        'ddos protection',
+        'bot detection',
+        'please verify you are human',
+        'captcha',
+        'challenge-form',
+        # Generic blocking
+        'blocked by security',
+        '403 forbidden',
+        'error 1020'
+    ]
+    
+    for indicator in protection_indicators:
+        if indicator in content_lower:
+            return True
+    
+    return False
+
 def is_suspiciously_empty(html_content, domain):
     """Check if the content is suspiciously empty for a non-trusted domain"""
     if is_trusted_domain(domain):
         return False
+    
+    # Check if it's a protection page
+    if is_protection_page(html_content):
+        return True
 
     # Completely empty or just basic tags
     if len(html_content) < 100:
@@ -462,10 +522,11 @@ def get_num_sensitive_words(soup, domain, url, html_content):
     # First, get URL suspicion score
     url_suspicion = get_url_suspicion_score(url, domain)
     
-    # Check if page is suspiciously empty
-    if is_suspiciously_empty(html_content, domain):
-        # Empty page on suspicious domain = likely phishing
-        return url_suspicion + 20  # Add base score for empty suspicious page
+    # Check if page is suspiciously empty or blocked
+    if is_suspiciously_empty(html_content, domain) or is_protection_page(html_content):
+        # Empty/blocked page on suspicious domain = likely phishing
+        # Base score of 30 for blocked suspicious pages, plus URL suspicion
+        return 30 + url_suspicion
     
     # Extract all text (existing logic)
     for script_or_style in soup(["script", "style", "head", "title", "meta", "[document]"]):
@@ -516,7 +577,7 @@ def get_num_sensitive_words(soup, domain, url, html_content):
 
 def get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href, domain):
     """
-    BALANCED: Risk-tiered version - only relaxed for trusted domains.
+    Risk-tiered version - only relaxed for trusted domains.
     """
     if is_trusted_domain(domain):
         # Trusted domains often have more JS-based navigation
@@ -537,7 +598,7 @@ def get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href, domain):
 
 def get_ext_meta_script_link_rt(soup, domain):
     """
-    BALANCED: Risk-tiered feature - only considers CDNs for trusted domains.
+    Risk-tiered feature - only considers CDNs for trusted domains.
     """
     total_resources = 0
     external_resources = 0
@@ -592,7 +653,7 @@ def get_ext_meta_script_link_rt(soup, domain):
 
 def extract_features(url, html_content):
     """
-    BALANCED: Extracts features with appropriate handling for trusted vs untrusted domains.
+    Enhanced feature extraction that handles empty pages and URL patterns
     """
     features = {}
 
