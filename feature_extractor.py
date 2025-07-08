@@ -25,7 +25,7 @@ FEATURE_ORDER = [
     'NumSensitiveWords'
 ]
 
-# --- IMPROVEMENT 1: Trusted Domain Allowlist ---
+# --- Trusted Domain Allowlist ---
 # Major legitimate sites that should have relaxed feature extraction
 TRUSTED_DOMAINS = {
     # Search engines and major platforms
@@ -69,9 +69,110 @@ TRUSTED_DOMAINS = {
     'onedrive.live.com',
 }
 
+# Known brand names that phishers target
+TARGETED_BRANDS = {
+    'paypal', 'amazon', 'apple', 'microsoft', 'google', 'facebook',
+    'netflix', 'ebay', 'chase', 'wellsfargo', 'bankofamerica', 'citi',
+    'dropbox', 'linkedin', 'twitter', 'instagram', 'whatsapp', 'spotify',
+    'adobe', 'office365', 'outlook', 'allegro', 'alibaba', 'aliexpress'
+}
+
+# Suspicious TLDs commonly used in phishing
+SUSPICIOUS_TLDS = {
+    '.tk', '.ml', '.ga', '.cf', '.click', '.download', '.review',
+    '.work', '.date', '.men', '.loan', '.racing', '.win', '.bid',
+    '.trade', '.webcam', '.science', '.party', '.kim', '.country',
+    '.stream', '.gdn', '.mom', '.xin', '.gq', '.cc', '.pw', '.top',
+    '.club', '.buzz', '.biz', '.rocks', '.space', '.site', '.online',
+    '.website', '.press', '.fun', '.host', '.store', '.cfd', '.sbs',
+    '.rest', '.quest', '.cyou', '.icu', '.uno', '.shop', '.fit'
+}
+
 def is_trusted_domain(domain):
     """Check if a domain is in our trusted allowlist."""
     return domain.lower() in TRUSTED_DOMAINS
+
+def get_url_suspicion_score(url, domain):
+    """
+    Calculate a suspicion score based on URL patterns.
+    This helps catch phishing even with empty content.
+    """
+    score = 0
+    url_lower = url.lower()
+    domain_lower = domain.lower()
+    
+    # Check for brand spoofing in domain
+    for brand in TARGETED_BRANDS:
+        if brand in domain_lower and not is_trusted_domain(domain):
+            # Brand name in untrusted domain
+            if f'{brand}.com' not in domain_lower and f'www.{brand}.com' not in domain_lower:
+                score += 30  # High weight for brand spoofing
+    
+    # Check for suspicious TLD
+    for tld in SUSPICIOUS_TLDS:
+        if domain_lower.endswith(tld):
+            score += 15
+            break
+    
+    # Check for suspicious patterns
+    suspicious_patterns = [
+        r'[0-9]{5,}',  # Long numbers (like pl-oferta95642)
+        r'-[a-z]+[0-9]+\.',  # Pattern like -oferta95642.
+        r'[a-z]+-[a-z]+-[a-z]+',  # Multiple hyphens
+        r'secure.*update',  # secure-update patterns
+        r'verify.*account',  # verify-account patterns
+        r'confirm.*identity',  # confirm-identity patterns
+        r'account.*suspended',  # account-suspended patterns
+    ]
+    
+    for pattern in suspicious_patterns:
+        if re.search(pattern, url_lower):
+            score += 10
+    
+    # Check for homograph attacks (similar looking characters)
+    homograph_chars = ['0' in domain_lower and 'o' in brand for brand in TARGETED_BRANDS]
+    if any(homograph_chars):
+        score += 10
+    
+    # Subdomain abuse (e.g., paypal.fake-site.com)
+    parts = domain_lower.split('.')
+    if len(parts) > 2:  # Has subdomains
+        for brand in TARGETED_BRANDS:
+            if brand in '.'.join(parts[:-2]):  # Brand in subdomain
+                score += 20
+    
+    # IP address in URL
+    if re.search(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', domain):
+        score += 25
+    
+    # URL shortener patterns
+    if len(domain) < 10 and '.' in domain and not is_trusted_domain(domain):
+        score += 10
+    
+    return score
+
+def is_suspiciously_empty(html_content, domain):
+    """Check if the content is suspiciously empty for a non-trusted domain"""
+    if is_trusted_domain(domain):
+        return False
+
+    # Completely empty or just basic tags
+    if len(html_content) < 100:
+        return True
+
+    # Just whitespace and basic HTML structure
+    soup = BeautifulSoup(html_content, 'html.parser')
+    text_content = soup.get_text(strip=True)
+
+    if len(text_content) < 10:  # Less than 10 chars of actual text
+        return True
+
+    # Check for "loading" pages that might be waiting for JS
+    loading_indicators = ['loading', 'please wait', 'redirecting', 'one moment']
+    if any(indicator in text_content.lower() for indicator in loading_indicators) and len(text_content) < 50:
+        return True
+
+    return False
 
 # --- Part 1: URL-Based Feature Extractors ---
 
@@ -266,16 +367,22 @@ def get_pct_null_self_redirect_hyperlinks(soup):
             
     return (null_links / total_links) if total_links > 0 else 0.0
 
-def get_frequent_domain_name_mismatch(soup, domain):
+# Modified domain mismatch to handle empty pages
+def get_frequent_domain_name_mismatch(soup, domain, url, html_content):
     """
-    BALANCED: Checks if the page's domain appears infrequently as anchor text.
-    Only relaxed for trusted domains.
+    Enhanced to detect brand spoofing even in empty pages
     """
+    # If page is empty but URL is suspicious, flag it
+    if is_suspiciously_empty(html_content, domain):
+        url_suspicion = get_url_suspicion_score(url, domain)
+        if url_suspicion > 20:
+            return 1  # Flag as mismatch
+    
+    # Original logic for non-empty pages
     total_links_with_text = 0
     domain_in_anchor_count = 0
     domain_base = domain.replace('www.', '').split('.')[0]
 
-    # Check text content and aria-label/title attributes
     for a in soup.find_all('a', href=True):
         link_text = ""
         
@@ -293,15 +400,17 @@ def get_frequent_domain_name_mismatch(soup, domain):
             domain_in_anchor_count += 1
 
     if total_links_with_text == 0:
+        # No links, but check if URL is trying to spoof a brand
+        for brand in TARGETED_BRANDS:
+            if brand in domain.lower() and not is_trusted_domain(domain):
+                return 1
         return 0
         
     match_ratio = (domain_in_anchor_count / total_links_with_text)
     
-    # Only relax threshold for trusted domains
     if is_trusted_domain(domain):
         return 1 if match_ratio < 0.10 else 0
     else:
-        # Original threshold for unknown domains
         return 1 if match_ratio < 0.20 else 0
 
 # Modified form detection to catch more evasion techniques
@@ -345,13 +454,24 @@ def get_submit_info_to_email(soup):
             return 1
     return 0
 
-# Modified sensitive words function
-def get_num_sensitive_words(soup, domain):
+# Enhanced sensitive words function
+def get_num_sensitive_words(soup, domain, url, html_content):
     """
-    ENHANCED: Better detection of sensitive content including hidden text
+    Enhanced detection including URL patterns and empty page handling
     """
-    # Extract all possible text
-    full_text = extract_all_text(soup)
+    # First, get URL suspicion score
+    url_suspicion = get_url_suspicion_score(url, domain)
+    
+    # Check if page is suspiciously empty
+    if is_suspiciously_empty(html_content, domain):
+        # Empty page on suspicious domain = likely phishing
+        return url_suspicion + 20  # Add base score for empty suspicious page
+    
+    # Extract all text (existing logic)
+    for script_or_style in soup(["script", "style", "head", "title", "meta", "[document]"]):
+        script_or_style.extract()
+    
+    text = soup.get_text(separator=' ', strip=True).lower()
     
     if is_trusted_domain(domain):
         # For trusted domains, look for specific phishing indicators
@@ -361,10 +481,10 @@ def get_num_sensitive_words(soup, domain):
             "temporary suspension", "verify your account", "update payment",
             "security alert", "account verification required"
         ]
-        count = sum(1 for phrase in phishing_phrases if phrase in full_text)
+        count = sum(1 for phrase in phishing_phrases if phrase in text)
         return count * 5
     else:
-        # For non-trusted domains, enhanced detection
+        # For non-trusted domains
         sensitive_words = [
             "login", "password", "verify", "account", "update", 
             "secure", "signin", "sign in", "log in", "banking", 
@@ -375,15 +495,22 @@ def get_num_sensitive_words(soup, domain):
         
         count = 0
         for word in sensitive_words:
-            count += full_text.count(word)
+            count += text.count(word)
         
-        # Add suspicious pattern count
-        suspicious_patterns = get_suspicious_patterns(soup, domain, full_text)
-        count += suspicious_patterns
+        # Add URL suspicion score
+        count += url_suspicion
         
-        # If very little text but has form/inputs, that's suspicious
-        if len(full_text) < 200 and (soup.find('form') or len(soup.find_all('input')) > 2):
-            count += 10
+        # If very little text but suspicious URL, increase score
+        if len(text) < 50 and url_suspicion > 20:
+            count += 15
+        
+        # Check form placeholders and values even if no visible text
+        for input_tag in soup.find_all('input'):
+            placeholder = (input_tag.get('placeholder', '') + ' ' + 
+                          input_tag.get('value', '')).lower()
+            for word in sensitive_words:
+                if word in placeholder:
+                    count += 2
         
         return count
 
@@ -471,7 +598,6 @@ def extract_features(url, html_content):
 
     # Add minimal content detection
     if len(html_content.strip()) < 100:
-        # Minimal content is suspicious for most sites
         print(f"WARNING: Minimal HTML content ({len(html_content)} chars) for {url}")
     
     try:
@@ -496,10 +622,10 @@ def extract_features(url, html_content):
         pct_null_href = get_pct_null_self_redirect_hyperlinks(soup)
         features['PctNullSelfRedirectHyperlinks'] = pct_null_href
         
-        features['FrequentDomainNameMismatch'] = get_frequent_domain_name_mismatch(soup, domain)
+        features['FrequentDomainNameMismatch'] = get_frequent_domain_name_mismatch(soup, domain, url, html_content)
         features['InsecureForms'] = get_insecure_forms(soup, domain)
         features['SubmitInfoToEmail'] = get_submit_info_to_email(soup)
-        features['NumSensitiveWords'] = get_num_sensitive_words(soup, domain)
+        features['NumSensitiveWords'] = get_num_sensitive_words(soup, domain, url, html_content)
         
         # Risk-tiered features (now domain-aware)
         features['PctExtNullSelfRedirectHyperlinksRT'] = get_pct_ext_null_self_redirect_hyperlinks_rt(pct_null_href, domain)
