@@ -136,7 +136,10 @@ if st.button("Analyze URL"):
                     # If it's a trusted domain being analyzed in detail, show that context
                     if check_allowlist(normalized_url) and force_detailed:
                         st.info("📝 **Note:** This is a trusted domain. The analysis below shows what the AI model sees, which may include false positive indicators due to legitimate security features.")
-                    
+
+                    st.info("**Important**: This tool is still in deveopment. Data used to train the model cuts off at 2017.  Modern phishing sites are complex and more sophisticated evasio techniques.")
+                    st.info("Categorization of a false positive = categorized as Phishing when it is not. False negative = categorized as Legitimate when it is not.  Make sure to doublecheck the link. Do not click it if you do not trust it.")
+
                     if prediction == 1:
                         if check_allowlist(normalized_url):
                             st.warning(f"**Model Output: Phishing** (Confidence: {prediction_proba[1]:.2%})")
