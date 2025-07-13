@@ -91,7 +91,6 @@ AegisLens is transparent about its limitations:
 
 ### **Performance Metrics**
 
-* **False Positives on Major Sites:** 0% (via trusted domain list)
 * **Detection of Protected Phishing:** ~70% (via URL pattern analysis)
 * **Average Analysis Time:** 3-5 seconds
 * **Model Accuracy:** ~98% on original test set
