@@ -177,7 +177,7 @@ if st.button("Analyze URL", type="primary"):
                     # Step 2: Check for suspiciously empty content
                     if len(html_content.strip()) < 100:
                         st.warning("⚠️ The page returned minimal content. This is often a sign of:")
-                        st.write("• Anti-analysis techniques by phishing sites")
+                        st.write("• Analisys evasion techniques used by phishing sites")
                         st.write("• JavaScript-rendered content")  
                         st.write("• The site detecting automated access")
                     
@@ -268,7 +268,7 @@ if st.button("Analyze URL", type="primary"):
                             st.write(f"• {rec}")
                     
                     # Technical details
-                    with st.expander("🔍 Technical Analysis"):
+                    with st.expander("Technical Analysis"):
                         # SHAP visualization
                         st.subheader("AI Explanation")
                         st.write("Features pushing toward Phishing (red) vs Legitimate (blue):")
